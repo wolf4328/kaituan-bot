@@ -11,8 +11,10 @@ const at = (id) => `<@${id}>`;
 const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 export const msgLink = (guildId, channelId, messageId) => `https://discord.com/channels/${guildId}/${channelId}/${messageId}`;
 
+// 10 人以內：一顆愛心 = 一個人；超過 10 人才按比例縮成 10 顆
 function bar(n, total) {
-  const w = 8;
+  if (total <= 10) return '🩷'.repeat(n) + '🩶'.repeat(Math.max(0, total - n));
+  const w = 10;
   const f = total ? Math.round((n / total) * w) : 0;
   return '🩷'.repeat(f) + '🩶'.repeat(w - f);
 }
