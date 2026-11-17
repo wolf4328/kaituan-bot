@@ -43,9 +43,11 @@ async function pickGame(i) {
   const v = (i.options.getString('遊戲') || '').trim();
   if (UUID.test(v)) { const g = await getGame(v); if (g && g.guild_id === i.guildId) return g; }
   const games = await getGames(i.guildId);
-  const k = v.toLowerCase();
-  return games.find((g) => g.name.toLowerCase() === k || (g.short || '').toLowerCase() === k)
-    || games.find((g) => g.name.toLowerCase().includes(k) || (g.short || '').toLowerCase().includes(k)) || null;
+  const norm = (x) => (x || '').toLowerCase().replace(/[\s\-_]+/g, '');
+  const k = norm(v);
+  if (!k) return null;
+  return games.find((g) => norm(g.name) === k || norm(g.short) === k)
+    || games.find((g) => norm(g.name).includes(k) || norm(g.short).includes(k)) || null;
 }
 const NO_GAME = '找不到這款遊戲。請從選單裡點選，或先用 `/遊戲 新增` 加入。可以用 `/遊戲 列表` 看有哪些遊戲。';
 async function pickEvent(i) {
