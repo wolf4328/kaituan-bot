@@ -1,4 +1,5 @@
-import { SlashCommandBuilder, ChannelType } from 'discord.js';
+import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
+const ADMIN = PermissionFlagsBits.ManageGuild;
 
 const gameOpt = (o, required = true) => o.setName('遊戲').setDescription('選一款遊戲').setRequired(required).setAutocomplete(true);
 const eventOpt = (o) => o.setName('場次').setDescription('選一個場次').setRequired(true).setAutocomplete(true);
@@ -23,33 +24,13 @@ const gameFields = (s, isNew) => {
 };
 
 export const commands = [
-  new SlashCommandBuilder().setName('設定').setDescription('機器人設定（管理員）')
-    .addSubcommand((s) => s.setName('頻道').setDescription('指定發時間表和場次卡的頻道')
-      .addChannelOption((o) => o.setName('頻道').setDescription('例如 #開團排程').addChannelTypes(ChannelType.GuildText).setRequired(true)))
-    .addSubcommand((s) => s.setName('管理員').setDescription('指定誰能用管理指令（伺服器管理員本來就能用）')
-      .addRoleOption((o) => o.setName('身分組').setDescription('管理員身分組').setRequired(true)))
-    .addSubcommand((s) => s.setName('預設時間').setDescription('設定星期一到日各自的預設開打時間'))
-    .addSubcommand((s) => s.setName('提醒').setDescription('設定提醒時間')
-      .addIntegerOption((o) => o.setName('開打前分鐘').setDescription('開打前幾分鐘提醒，預設 30').setMinValue(5).setMaxValue(240))
-      .addIntegerOption((o) => o.setName('截止前催填小時').setDescription('投票截止前幾小時私訊沒填的人，0 = 不自動催，預設 6').setMinValue(0).setMaxValue(72)))
-    .addSubcommand((s) => s.setName('固定團身分組').setDescription('把團員自動加上這個身分組（只加不拿掉；不填 = 關閉）')
-      .addRoleOption((o) => o.setName('身分組').setDescription('例如 @固定團')))
-    .addSubcommand((s) => s.setName('查看').setDescription('看目前的設定')),
+  new SlashCommandBuilder().setName('設定').setDescription('打開設定面板：頻道、管理員、預設時間、提醒、遊戲列表').setDefaultMemberPermissions(ADMIN),
 
-  new SlashCommandBuilder().setName('遊戲').setDescription('管理遊戲和成團規則')
-    .addSubcommand((s) => gameFields(s.setName('新增').setDescription('新增一款遊戲（管理員）'), true))
-    .addSubcommand((s) => gameFields(s.setName('編輯').setDescription('修改遊戲規則（管理員）'), false))
-    .addSubcommand((s) => s.setName('列表').setDescription('列出所有遊戲和規則'))
-    .addSubcommand((s) => s.setName('刪除').setDescription('刪除遊戲（管理員）').addStringOption((o) => gameOpt(o))),
+  new SlashCommandBuilder().setName('遊戲').setDescription('修改或刪除遊戲（管理員）').setDefaultMemberPermissions(ADMIN)
+    .addSubcommand((s) => gameFields(s.setName('編輯').setDescription('改名稱、成團規則、封面'), false))
+    .addSubcommand((s) => s.setName('刪除').setDescription('刪除遊戲').addStringOption((o) => gameOpt(o))),
 
-  new SlashCommandBuilder().setName('團員').setDescription('管理每款遊戲的團員名單（管理員）')
-    .addSubcommand((s) => s.setName('匯入').setDescription('把某個身分組的人整批加進遊戲團員')
-      .addRoleOption((o) => o.setName('身分組').setDescription('例如 @固定團').setRequired(true))
-      .addStringOption((o) => gameOpt(o)))
-    .addSubcommand((s) => s.setName('管理').setDescription('用選單勾選團員').addStringOption((o) => gameOpt(o)))
-    .addSubcommand((s) => s.setName('必到').setDescription('勾選必到成員（例如存檔在他電腦上的房主）').addStringOption((o) => gameOpt(o))),
-
-  new SlashCommandBuilder().setName('開團').setDescription('投票與排程（管理員）')
+  new SlashCommandBuilder().setName('開團').setDescription('投票與排程（管理員）').setDefaultMemberPermissions(ADMIN)
     .addSubcommand((s) => s.setName('發起').setDescription('選遊戲、勾團員、挑日期，一次發出時間表')
       .addStringOption((o) => o.setName('遊戲').setDescription('從選單選，或直接打新遊戲名稱').setRequired(true).setAutocomplete(true).setMaxLength(60))
       .addStringOption((o) => o.setName('封面').setDescription('選填：貼 Steam 商店網址當封面（不填會自動用名稱找）').setMaxLength(500)))
@@ -58,7 +39,7 @@ export const commands = [
     .addSubcommand((s) => s.setName('排程').setDescription('重新叫出排程清單'))
     .addSubcommand((s) => s.setName('作廢').setDescription('作廢目前的投票（不會開任何場次）')),
 
-  new SlashCommandBuilder().setName('場次').setDescription('調整場次（管理員）')
+  new SlashCommandBuilder().setName('場次').setDescription('調整場次（管理員）').setDefaultMemberPermissions(ADMIN)
     .addSubcommand((s) => s.setName('改時間').setDescription('修改場次時間，會通知參加的人')
       .addStringOption((o) => eventOpt(o))
       .addStringOption((o) => o.setName('時間').setDescription('例如 21:30').setRequired(true))

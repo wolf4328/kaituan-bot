@@ -1,6 +1,7 @@
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, UserSelectMenuBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle, EmbedBuilder, MessageFlags, PermissionFlagsBits, AttachmentBuilder,
+  ChannelSelectMenuBuilder, RoleSelectMenuBuilder, ChannelType,
 } from 'discord.js';
 import { sb, q, getSettings, setSettings, getGames, getGame, latestPoll, getEvent } from './db.js';
 import {
@@ -103,63 +104,81 @@ async function command(i) {
   const sub = i.options.getSubcommand(false);
   if (name === '我的場次') return myEvents(i);
   if (name === '月曆') return calendarCmd(i);
-  if (name === '遊戲' && sub === '列表') return listGames(i);
 
   const settings = await requireAdmin(i);
   if (!settings) return;
-  if (name === '設定') return settingsCmd(i, sub, settings);
+  if (name === '設定') return i.reply({ ...settingsPanel(settings), flags: E });
   if (name === '遊戲') return gameCmd(i, sub);
-  if (name === '團員') return rosterCmd(i, sub);
   if (name === '開團') return pollCmd(i, sub, settings);
   if (name === '場次') return eventCmd(i, sub, settings);
 }
 
 // ── /設定 ──
 const WD_ORDER = [1, 2, 3, 4, 5, 6, 0];
-async function settingsCmd(i, sub, settings) {
-  if (sub === '頻道') {
-    const ch = i.options.getChannel('頻道');
-    await setSettings(i.guildId, { channel_id: ch.id, overview_message_id: null });
-    await i.reply({ content: `✅ 之後的時間表和場次卡都會發在 ${ch}。我也會在那裡貼一則「場次總覽」，建議把它釘選起來。`, flags: E });
+function settingsView(s) {
+  return new EmbedBuilder().setColor(SKY).setTitle('⚙️ 開團排程機器人設定').addFields(
+    { name: '📍 開團頻道', value: s.channel_id ? `<#${s.channel_id}>` : '⚠️ 還沒設定' },
+    { name: '🛡️ 管理員身分組', value: s.admin_role_id ? `<@&${s.admin_role_id}>` : '只有伺服器管理員', inline: true },
+    { name: '🔔 提醒', value: `開打前 ${s.remind_minutes} 分鐘\n截止前 ${s.nudge_hours ? `${s.nudge_hours} 小時催填` : '不自動催填'}`, inline: true },
+    { name: '🕘 預設開打時間', value: WD_ORDER.map((w) => `週${WD[w]} ${s.default_times[String(w)] || '21:00'}`).join('　') },
+    { name: '🏷️ 固定團身分組（進階）', value: s.member_role_id ? `<@&${s.member_role_id}>` : '不使用' },
+  );
+}
+function settingsPanel(s, note = '') {
+  return {
+    content: note, embeds: [settingsView(s)],
+    components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('set:menu').setPlaceholder('選擇要設定的項目…').addOptions(
+      { label: '開團頻道', value: 'channel', emoji: '📍', description: '時間表和場次卡要發在哪個頻道' },
+      { label: '管理員身分組', value: 'admin', emoji: '🛡️', description: '讓某個身分組也能開團和改設定' },
+      { label: '預設開打時間', value: 'time', emoji: '🕘', description: '週一到週日各自的預設時間' },
+      { label: '提醒時間', value: 'remind', emoji: '🔔', description: '開打前幾分鐘提醒、截止前幾小時催填' },
+      { label: '遊戲列表', value: 'games', emoji: '🎮', description: '看所有遊戲、團員和規則' },
+      { label: '固定團身分組（進階）', value: 'role', emoji: '🏷️', description: '把團員自動加上某個身分組，通常不需要' },
+    ))],
+  };
+}
+const backRow = () => new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('set:back').setLabel('返回設定').setStyle(ButtonStyle.Secondary));
+
+async function settingsComponent(i, act) {
+  const s = await getSettings(i.guildId);
+  if (!isAdminMember(i.member, i.memberPermissions, s)) return i.reply({ content: '🔒 只有管理員能改設定。', flags: E });
+  if (act === 'back') return i.update(settingsPanel(s));
+  if (act === 'menu') {
+    const v = i.values[0];
+    if (v === 'channel') return i.update({ content: '選擇開團頻道：', embeds: [], components: [
+      new ActionRowBuilder().addComponents(new ChannelSelectMenuBuilder().setCustomId('set:channel').setChannelTypes(ChannelType.GuildText).setPlaceholder('選擇頻道')), backRow()] });
+    if (v === 'admin') return i.update({ content: '選擇管理員身分組（這個身分組的人可以開團、改設定）：', embeds: [], components: [
+      new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId('set:admin').setPlaceholder('選擇身分組')), backRow()] });
+    if (v === 'role') return i.update({ content: '**固定團身分組（進階）**\n被加進任何遊戲團員名單的人，會自動拿到這個身分組。只會加，不會拿掉任何人的身分組。\n機器人的身分組要排在它上面才改得動。', embeds: [], components: [
+      new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId('set:role').setPlaceholder('選擇身分組')),
+      new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('set:roleoff').setLabel('不使用這個功能').setStyle(ButtonStyle.Danger), new ButtonBuilder().setCustomId('set:back').setLabel('返回設定').setStyle(ButtonStyle.Secondary))] });
+    if (v === 'time') {
+      const lines = WD_ORDER.map((w) => `週${WD[w]} ${s.default_times[String(w)] || '21:00'}`).join('\n');
+      return i.showModal(new ModalBuilder().setCustomId('settime').setTitle('每天的預設開打時間').addComponents(
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('t').setLabel('只改後面的時間就好').setStyle(TextInputStyle.Paragraph).setValue(lines)),
+      ));
+    }
+    if (v === 'remind') {
+      return i.showModal(new ModalBuilder().setCustomId('setremind').setTitle('提醒時間').addComponents(
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('a').setLabel('開打前幾分鐘提醒（5～240）').setStyle(TextInputStyle.Short).setValue(String(s.remind_minutes))),
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('b').setLabel('截止前幾小時私訊沒填的人（0 = 不催）').setStyle(TextInputStyle.Short).setValue(String(s.nudge_hours))),
+      ));
+    }
+    if (v === 'games') return i.update({ content: '', embeds: [await gamesEmbed(i.guildId)], components: [backRow()] });
+  }
+  if (act === 'channel') {
+    const id = i.values[0];
+    const ns = await setSettings(i.guildId, { channel_id: id, overview_message_id: null });
+    await i.update(settingsPanel(ns, `✅ 開團頻道改成 <#${id}>。我會在那裡貼一則「📅 場次總覽」，記得把它釘選。`));
     return refreshOverview(i.client, i.guildId);
   }
-  if (sub === '管理員') {
-    const r = i.options.getRole('身分組');
-    await setSettings(i.guildId, { admin_role_id: r.id });
-    return i.reply({ content: `✅ ${r} 的成員現在可以用管理指令了。`, flags: E });
-  }
-  if (sub === '預設時間') {
-    const lines = WD_ORDER.map((w) => `週${WD[w]} ${settings.default_times[String(w)] || '21:00'}`).join('\n');
-    return i.showModal(new ModalBuilder().setCustomId('settime').setTitle('每天的預設開打時間').addComponents(
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('t').setLabel('只改後面的時間就好').setStyle(TextInputStyle.Paragraph).setValue(lines)),
-    ));
-  }
-  if (sub === '提醒') {
-    const patch = {};
-    const a = i.options.getInteger('開打前分鐘'); const b = i.options.getInteger('截止前催填小時');
-    if (a != null) patch.remind_minutes = a;
-    if (b != null) patch.nudge_hours = b;
-    const s = Object.keys(patch).length ? await setSettings(i.guildId, patch) : settings;
-    return i.reply({ content: `✅ 開打前 **${s.remind_minutes} 分鐘**提醒；投票截止前 **${s.nudge_hours} 小時**私訊沒填的人${s.nudge_hours ? '' : '（已關閉自動催填）'}。`, flags: E });
-  }
-  if (sub === '固定團身分組') {
-    const r = i.options.getRole('身分組');
-    await setSettings(i.guildId, { member_role_id: r?.id ?? null });
-    if (!r) return i.reply({ content: '✅ 已關閉身分組自動同步。', flags: E });
-    await i.deferReply({ flags: E });
+  if (act === 'admin') return i.update(settingsPanel(await setSettings(i.guildId, { admin_role_id: i.values[0] }), `✅ <@&${i.values[0]}> 現在可以開團和改設定了。`));
+  if (act === 'roleoff') return i.update(settingsPanel(await setSettings(i.guildId, { member_role_id: null }), '✅ 已關閉固定團身分組。'));
+  if (act === 'role') {
+    const ns = await setSettings(i.guildId, { member_role_id: i.values[0] });
+    await i.update(settingsPanel(ns, '⏳ 正在幫團員加上身分組…'));
     const warn = await syncRole(i.client, i.guildId);
-    return i.editReply(`✅ 之後被加進團員名單的人，會自動拿到 ${r}（不會拿掉任何人的身分組）。${warn}`);
-  }
-  if (sub === '查看') {
-    const s = settings;
-    const e = new EmbedBuilder().setColor(SKY).setTitle('⚙️ 目前設定').addFields(
-      { name: '開團頻道', value: s.channel_id ? `<#${s.channel_id}>` : '（未設定，請用 /設定 頻道）' },
-      { name: '管理員身分組', value: s.admin_role_id ? `<@&${s.admin_role_id}>` : '只有伺服器管理員', inline: true },
-      { name: '固定團身分組', value: s.member_role_id ? `<@&${s.member_role_id}>` : '不同步', inline: true },
-      { name: '提醒', value: `開打前 ${s.remind_minutes} 分鐘；截止前 ${s.nudge_hours} 小時催填` },
-      { name: '預設時間', value: WD_ORDER.map((w) => `週${WD[w]} ${s.default_times[String(w)] || '21:00'}`).join('　') },
-    );
-    return i.reply({ embeds: [e], flags: E });
+    return i.editReply(settingsPanel(ns, `✅ 團員會自動拿到 <@&${i.values[0]}>（不會拿掉任何人的）。${warn}`));
   }
 }
 
@@ -209,45 +228,16 @@ async function gameCmd(i, sub) {
     });
   }
 }
-async function listGames(i) {
-  const games = await getGames(i.guildId);
-  if (!games.length) return i.reply({ content: '還沒有任何遊戲，管理員可以用 `/遊戲 新增` 加入。', flags: E });
+async function gamesEmbed(guildId) {
+  const games = await getGames(guildId);
+  if (!games.length) return new EmbedBuilder().setColor(SKY).setTitle('🎮 遊戲列表').setDescription('還沒有遊戲。用 `/開團 發起` 打新遊戲名稱就會自動建立。');
   const mem = await q(sb.from('game_members').select('*').in('game_id', games.map((g) => g.id)));
   const lines = games.map((g) => {
     const ms = mem.filter((m) => m.game_id === g.id);
     const req = ms.filter((m) => m.required).map((m) => `<@${m.user_id}>`);
     return `${gameSummary(g, ms.length)}${req.length ? `\n必到：${req.join('、')}` : ''}`;
   });
-  return i.reply({ embeds: [new EmbedBuilder().setColor(SKY).setTitle('🎮 遊戲列表').setDescription(lines.join('\n\n'))], flags: E });
-}
-
-// ── /團員 ──
-async function rosterCmd(i, sub) {
-  const g = await pickGame(i);
-  if (!g) return i.reply({ content: NO_GAME, flags: E });
-  const cur = await q(sb.from('game_members').select('*').eq('game_id', g.id));
-  if (sub === '匯入') {
-    const role = i.options.getRole('身分組');
-    await i.deferReply({ flags: E });
-    await i.guild.members.fetch();
-    const ids = [...i.guild.roles.cache.get(role.id).members.values()].filter((m) => !m.user.bot).map((m) => m.id);
-    const add = ids.filter((id) => !cur.some((c) => c.user_id === id));
-    if (add.length) await q(sb.from('game_members').insert(add.map((user_id) => ({ game_id: g.id, user_id }))));
-    const warn = await syncRole(i.client, i.guildId);
-    return i.editReply(`✅ 從 ${role} 匯入 ${add.length} 人到 **${g.name}**，現在共 ${cur.length + add.length} 人。${warn}\n要調整用 \`/團員 管理\`，設定房主用 \`/團員 必到\`。`);
-  }
-  if (sub === '管理') {
-    const menu = new UserSelectMenuBuilder().setCustomId(`roster:${g.id}`).setPlaceholder('勾選這款遊戲的團員').setMinValues(0).setMaxValues(25);
-    if (cur.length) menu.setDefaultUsers(cur.slice(0, 25).map((c) => c.user_id));
-    return i.reply({ content: `**${g.name}** 的團員（目前 ${cur.length} 人）。勾選完選單會自動儲存。`, components: [new ActionRowBuilder().addComponents(menu)], flags: E });
-  }
-  if (sub === '必到') {
-    if (!cur.length) return i.reply({ content: '這款遊戲還沒有團員，先用 `/團員 管理` 設定。', flags: E });
-    const menu = new UserSelectMenuBuilder().setCustomId(`req:${g.id}`).setPlaceholder('勾選必到成員').setMinValues(0).setMaxValues(Math.min(25, cur.length));
-    const req = cur.filter((c) => c.required).map((c) => c.user_id);
-    if (req.length) menu.setDefaultUsers(req);
-    return i.reply({ content: `**${g.name}** 的必到成員：這些人不能來的日子，這款遊戲就不會排。`, components: [new ActionRowBuilder().addComponents(menu)], flags: E });
-  }
+  return new EmbedBuilder().setColor(SKY).setTitle('🎮 遊戲列表').setDescription(lines.join('\n\n').slice(0, 4000)).setFooter({ text: '改規則或封面：/遊戲 編輯　刪除：/遊戲 刪除' });
 }
 
 // ── /開團 ──
@@ -520,8 +510,16 @@ async function modal(i) {
       const t = parseHM(line.replace(/週./, ''));
       if (w >= 0 && t) times[String(w)] = `${pad(t[0])}:${pad(t[1])}`;
     }
-    await setSettings(i.guildId, { default_times: times });
-    return i.reply({ content: `✅ 已更新：${WD_ORDER.map((w) => `週${WD[w]} ${times[String(w)]}`).join('　')}`, flags: E });
+    const ns = await setSettings(i.guildId, { default_times: times });
+    return i.update(settingsPanel(ns, '✅ 預設開打時間已更新。'));
+  }
+  if (id === 'setremind') {
+    const a = parseInt(i.fields.getTextInputValue('a'), 10), b = parseInt(i.fields.getTextInputValue('b'), 10);
+    const patch = {};
+    if (a >= 5 && a <= 240) patch.remind_minutes = a;
+    if (b >= 0 && b <= 72) patch.nudge_hours = b;
+    const ns = Object.keys(patch).length ? await setSettings(i.guildId, patch) : await getSettings(i.guildId);
+    return i.update(settingsPanel(ns, Object.keys(patch).length === 2 ? '✅ 提醒時間已更新。' : '⚠️ 有數字超出範圍，那一項沒有改。'));
   }
   if (id === 'drafttime') {
     const draft = drafts.get(i.user.id);
@@ -553,6 +551,8 @@ const sortedPicks = (d) => [...d.picks].sort((a, b) => new Date(a.starts_at) - n
 // ─── 按鈕與選單 ───
 async function component(i) {
   const [kind, act, arg, extra] = i.customId.split(':');
+
+  if (kind === 'set') return settingsComponent(i, act);
 
   // 開團 發起 的暫存設定
   if (kind === 'draft') {
@@ -758,4 +758,4 @@ async function component(i) {
     }
   }
 }
-export { draftView as _draftView };
+export { draftView as _draftView, settingsPanel as _settingsPanel };
