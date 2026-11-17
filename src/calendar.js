@@ -5,8 +5,8 @@ import { mk, tp, hm, pad } from './time.js';
 
 const require = createRequire(import.meta.url);
 let ready = null;
-let fontBuf = null;
-async function init() {
+export let fontBuf = null;
+export async function init() {
   if (!ready) {
     ready = (async () => {
       await initWasm(await readFile(require.resolve('@resvg/resvg-wasm/index_bg.wasm')));

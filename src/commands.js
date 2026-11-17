@@ -19,7 +19,7 @@ const gameFields = (s, isNew) => {
     .addIntegerOption((o) => o.setName('每週場數').setDescription('排程時建議開幾場').setMinValue(0).setMaxValue(14))
     .addStringOption((o) => o.setName('簡稱').setDescription('月曆上顯示的短名，例如：森林之子').setMaxLength(12))
     .addStringOption((o) => o.setName('介紹').setDescription('場次卡上的一句話介紹').setMaxLength(300))
-    .addStringOption((o) => o.setName('圖片網址').setDescription('場次卡的封面圖網址（例如 Steam 商店頁的封面圖）').setMaxLength(500));
+    .addStringOption((o) => o.setName('圖片網址').setDescription('Steam 商店網址或圖片網址').setMaxLength(500));
 };
 
 export const commands = [
@@ -50,7 +50,9 @@ export const commands = [
     .addSubcommand((s) => s.setName('必到').setDescription('勾選必到成員（例如存檔在他電腦上的房主）').addStringOption((o) => gameOpt(o))),
 
   new SlashCommandBuilder().setName('開團').setDescription('投票與排程（管理員）')
-    .addSubcommand((s) => s.setName('發起').setDescription('挑日期，發出開團時間表'))
+    .addSubcommand((s) => s.setName('發起').setDescription('選遊戲、勾團員、挑日期，一次發出時間表')
+      .addStringOption((o) => o.setName('遊戲').setDescription('從選單選，或直接打新遊戲名稱').setRequired(true).setAutocomplete(true).setMaxLength(60))
+      .addStringOption((o) => o.setName('封面').setDescription('選填：貼 Steam 商店網址當封面（不填會自動用名稱找）').setMaxLength(500)))
     .addSubcommand((s) => s.setName('催填').setDescription('立刻私訊還沒填完的人'))
     .addSubcommand((s) => s.setName('截止').setDescription('提前結束投票，私訊排程清單給你'))
     .addSubcommand((s) => s.setName('排程').setDescription('重新叫出排程清單'))

@@ -13,6 +13,7 @@ import {
   tp, mk, ymd, fromYmd, dayLabel, hm, full, ts, addDays, todayStart, parseHM, parseMD, withTime, pad, WD,
 } from './time.js';
 import { renderMonth, monthKey } from './calendar.js';
+import { resolveCover, steamAppId } from './cover.js';
 
 const E = MessageFlags.Ephemeral;
 const drafts = new Map(); // 發起投票的暫存設定，key = userId
@@ -79,8 +80,12 @@ async function autocomplete(i) {
   const kw = String(f.value || '').toLowerCase();
   if (f.name === '遊戲') {
     const games = await getGames(i.guildId);
-    return i.respond(games.filter((g) => !kw || g.name.toLowerCase().includes(kw) || (g.short || '').toLowerCase().includes(kw))
-      .slice(0, 25).map((g) => ({ name: g.name.slice(0, 100), value: g.id })));
+    const opts = games.filter((g) => !kw || g.name.toLowerCase().includes(kw) || (g.short || '').toLowerCase().includes(kw))
+      .slice(0, 24).map((g) => ({ name: g.name.slice(0, 100), value: g.id }));
+    const typed = String(f.value || '').trim();
+    const exact = games.some((g) => g.name.toLowerCase() === kw || (g.short || '').toLowerCase() === kw);
+    if (i.commandName === '開團' && typed && !exact) opts.push({ name: `＋ 新遊戲：${typed}`.slice(0, 100), value: typed.slice(0, 100) });
+    return i.respond(opts.slice(0, 25));
   }
   if (f.name === '場次') {
     const since = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
@@ -165,7 +170,11 @@ function gamePatch(i) {
   for (const [k, v] of Object.entries(map)) { const x = i.options.getString(k); if (x != null) p[v] = x.trim(); }
   const ints = { 門檻: 'min_players', 人數上限: 'cap', 每週場數: 'weekly_target' };
   for (const [k, v] of Object.entries(ints)) { const x = i.options.getInteger(k); if (x != null) p[v] = x; }
-  if (p.image_url && !/^https?:\/\//.test(p.image_url)) throw new Error('圖片網址要用 http 或 https 開頭');
+  if (p.image_url) {
+    const appid = steamAppId(p.image_url);
+    if (appid) p.image_url = `https://cdn.akamai.steamstatic.com/steam/apps/${appid}/header.jpg`;
+    else if (!/^https?:\/\//.test(p.image_url)) throw new Error('圖片網址要用 http 或 https 開頭');
+  }
   return p;
 }
 const gameSummary = (g, n) => `**${g.name}**${g.short ? `（${g.short}）` : ''}\n${g.mode === 'all' ? '全員到齊才開' : `${g.min_players} 人以上就開`}・上限 ${g.cap} 人・每週建議 ${g.weekly_target} 場${n != null ? `・團員 ${n} 人` : ''}`;
@@ -173,8 +182,12 @@ const gameSummary = (g, n) => `**${g.name}**${g.short ? `（${g.short}）` : ''}
 async function gameCmd(i, sub) {
   if (sub === '新增') {
     const p = gamePatch(i);
+    await i.deferReply({ flags: E });
     const g = await q(sb.from('games').insert({ guild_id: i.guildId, ...p }).select().single());
-    return i.reply({ content: `✅ 已新增\n${gameSummary(g)}\n\n下一步：用 \`/團員 匯入\` 或 \`/團員 管理\` 設定這款遊戲的團員。`, flags: E });
+    if (!g.image_url) {
+      try { g.image_url = await resolveCover(g); await q(sb.from('games').update({ image_url: g.image_url }).eq('id', g.id)); } catch (e) { console.warn('封面處理失敗', e.message); }
+    }
+    return i.editReply({ content: `✅ 已新增\n${gameSummary(g)}\n\n直接用 \`/開團 發起\` 就能勾團員、開投票。` });
   }
   if (sub === '編輯') {
     const target = await pickGame(i);
@@ -241,11 +254,23 @@ async function rosterCmd(i, sub) {
 async function pollCmd(i, sub, settings) {
   if (sub === '發起') {
     if (!settings.channel_id) return i.reply({ content: '請先用 `/設定 頻道` 指定開團頻道。', flags: E });
-    const games = await getGames(i.guildId);
-    if (!games.length) return i.reply({ content: '還沒有遊戲，先用 `/遊戲 新增`。', flags: E });
-    const draft = { guildId: i.guildId, games: games.length === 1 ? [games[0].id] : [], dates: [], times: {}, dl: 'first-1' };
+    await i.deferReply({ flags: E });
+    const game = await pickOrCreateGame(i);
+    const coverIn = i.options.getString('封面');
+    if (coverIn || !game.image_url) {
+      try {
+        game.image_url = await resolveCover(game, coverIn);
+        await q(sb.from('games').update({ image_url: game.image_url }).eq('id', game.id));
+      } catch (e) { console.warn('封面處理失敗', e.message); }
+    }
+    const roster = await q(sb.from('game_members').select('*').eq('game_id', game.id));
+    const draft = {
+      guildId: i.guildId, gameId: game.id,
+      members: roster.map((r) => r.user_id), required: roster.filter((r) => r.required).map((r) => r.user_id),
+      rule: game.mode === 'all' ? 'all' : String(game.min_players), dates: [], times: {}, dl: 'first-1',
+    };
     drafts.set(i.user.id, draft);
-    return i.reply({ ...draftView(draft, games, settings), flags: E });
+    return i.editReply(draftView(draft, game, settings));
   }
   if (sub === '催填') {
     const poll = await latestPoll(i.guildId, ['open']);
@@ -277,7 +302,21 @@ async function pollCmd(i, sub, settings) {
   }
 }
 
-function draftView(draft, games, settings, note = '') {
+async function pickOrCreateGame(i) {
+  const v = (i.options.getString('遊戲') || '').trim();
+  if (UUID.test(v)) { const g = await getGame(v); if (g && g.guild_id === i.guildId) return g; }
+  const norm = (x) => (x || '').toLowerCase().replace(/[\s\-_]+/g, '');
+  const games = await getGames(i.guildId);
+  const hit = games.find((g) => norm(g.name) === norm(v) || norm(g.short) === norm(v));
+  if (hit) return hit;
+  if (!v) throw new Error('請輸入遊戲名稱');
+  return q(sb.from('games').insert({ guild_id: i.guildId, name: v.slice(0, 60), mode: 'all', min_players: 4, cap: 25, weekly_target: 2 }).select().single());
+}
+
+const RULES = [['all', '全員到齊才開']].concat([2, 3, 4, 5, 6, 7, 8, 10].map((n) => [String(n), `${n} 人以上就開`]));
+const ruleText = (r) => (RULES.find(([v]) => v === r) || RULES[0])[1];
+
+function draftView(draft, game, settings, note = '') {
   const start = todayStart();
   const dayOpts = [];
   for (let k = 0; k < 25; k++) {
@@ -288,27 +327,32 @@ function draftView(draft, games, settings, note = '') {
     ['first-1', '第一場的前一天 23:59（建議）'], ['today', '今天 23:59'], ['tomorrow', '明天 23:59'], ['h3', '第一場開始前 3 小時'],
   ].map(([value, label]) => ({ label, value, default: draft.dl === value }));
   const sorted = [...draft.dates].sort();
-  const slotLines = sorted.map((k) => `・${dayLabel(fromYmd(k))} ${timeOf(draft, k, settings)}`);
-  const embed = new EmbedBuilder().setColor(SKY).setTitle('🗓️ 發起開團投票').setDescription([
-    `**遊戲：**${draft.games.length ? draft.games.map((id) => games.find((g) => g.id === id)?.name).join('、') : '（還沒選）'}`,
-    `**日期：**${sorted.length ? `${sorted.length} 天` : '（還沒選）'}`,
-    slotLines.join('\n'),
+  const embed = new EmbedBuilder().setColor(SKY).setTitle(`🗓️ 發起開團｜${game.name}`).setDescription([
+    `👥 **團員 ${draft.members.length} 人**　${draft.members.map((u) => `<@${u}>`).join(' ') || '（用第一個選單勾選）'}`,
+    `🎯 **成團條件**　${ruleText(draft.rule)}`,
+    `⭐ **必到**　${draft.required.map((u) => `<@${u}>`).join(' ') || '無'}`,
+    `📅 **日期**　${sorted.length ? '' : '（用第三個選單選）'}`,
+    sorted.map((k) => `・${dayLabel(fromYmd(k))} ${timeOf(draft, k, settings)}`).join('\n'),
     '',
-    '時間要改的話按「調整時間」。都選好就按「送出投票」。',
+    '-# 團員會記住，下次發起同款遊戲自動帶入。時間要改按「調整時間」。',
     note,
   ].filter((x) => x !== '').join('\n'));
+  if (game.image_url) embed.setThumbnail(game.image_url);
+  const memberSel = new UserSelectMenuBuilder().setCustomId('draft:members').setPlaceholder('👥 勾選團員').setMinValues(1).setMaxValues(25);
+  if (draft.members.length) memberSel.setDefaultUsers(draft.members.slice(0, 25));
   return {
-    embeds: [embed],
+    content: '', embeds: [embed],
     components: [
-      new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('draft:games').setPlaceholder('選擇遊戲（可複選）')
-        .setMinValues(1).setMaxValues(Math.min(25, games.length))
-        .addOptions(games.slice(0, 25).map((g) => ({ label: g.name.slice(0, 100), value: g.id, description: gameLabel(g).slice(0, 100), default: draft.games.includes(g.id) })))),
-      new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('draft:dates').setPlaceholder('選擇要問的日期（可複選，可以跨週）')
+      new ActionRowBuilder().addComponents(memberSel),
+      new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('draft:rule').setPlaceholder('🎯 成團條件')
+        .addOptions(RULES.map(([value, label]) => ({ label, value, default: draft.rule === value })))),
+      new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('draft:dates').setPlaceholder('📅 選擇要問的日期（可複選，可以跨週）')
         .setMinValues(1).setMaxValues(25).addOptions(dayOpts)),
-      new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('draft:dl').setPlaceholder('投票截止時間').addOptions(dlOpts)),
+      new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('draft:dl').setPlaceholder('⏰ 投票截止時間').addOptions(dlOpts)),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('draft:time').setLabel('調整時間').setEmoji('🕘').setStyle(ButtonStyle.Secondary).setDisabled(!draft.dates.length),
-        new ButtonBuilder().setCustomId('draft:send').setLabel('送出投票').setStyle(ButtonStyle.Success).setDisabled(!draft.dates.length || !draft.games.length),
+        new ButtonBuilder().setCustomId('draft:req').setLabel('必到成員').setEmoji('⭐').setStyle(ButtonStyle.Secondary).setDisabled(!draft.members.length),
+        new ButtonBuilder().setCustomId('draft:send').setLabel('送出投票').setStyle(ButtonStyle.Success).setDisabled(!draft.dates.length || !draft.members.length),
         new ButtonBuilder().setCustomId('draft:cancel').setLabel('取消').setStyle(ButtonStyle.Secondary),
       ),
     ],
@@ -317,13 +361,14 @@ function draftView(draft, games, settings, note = '') {
 const timeOf = (draft, k, settings) => draft.times[k] || settings.default_times[String(tp(fromYmd(k)).wd)] || '21:00';
 
 async function sendDraft(i, draft, settings) {
-  const games = (await getGames(draft.guildId)).filter((g) => draft.games.includes(g.id));
-  const mem = await q(sb.from('game_members').select('user_id').in('game_id', games.map((g) => g.id)));
-  const members = [...new Set(mem.map((m) => m.user_id))];
-  if (!members.length) return i.update({ ...draftView(draft, await getGames(draft.guildId), settings, '⚠️ 選的遊戲還沒有團員，先用 `/團員 匯入` 或 `/團員 管理`。') });
+  const game = await getGame(draft.gameId);
+  if (!game) return i.update({ content: '這款遊戲已經被刪除了，請重新 `/開團 發起`。', embeds: [], components: [] });
+  const members = [...new Set(draft.members)];
+  const redo = (note) => i.update(draftView(draft, game, settings, note));
+  if (!members.length) return redo('⚠️ 請先勾選團員。');
   const slots = [...draft.dates].sort().map((k) => withTime(fromYmd(k), parseHM(timeOf(draft, k, settings))));
   const now = Date.now();
-  if (slots.some((s) => s.getTime() <= now)) return i.update({ ...draftView(draft, await getGames(draft.guildId), settings, '⚠️ 有日期的開打時間已經過了，請取消勾選或調整時間。') });
+  if (slots.some((s) => s.getTime() <= now)) return redo('⚠️ 有日期的開打時間已經過了，請取消勾選或調整時間。');
   const first = slots[0];
   let deadline;
   const t0 = todayStart();
@@ -333,11 +378,17 @@ async function sendDraft(i, draft, settings) {
   else { const t = addDays(first, -1); deadline = mk(tp(t).y, tp(t).m, tp(t).d, 23, 59); }
   if (deadline >= first) deadline = new Date(first.getTime() - 3600 * 1000);
   if (deadline.getTime() <= now + 5 * 60000) deadline = new Date(first.getTime() - 30 * 60000);
-  if (deadline.getTime() <= now + 60000) return i.update({ ...draftView(draft, await getGames(draft.guildId), settings, '⚠️ 第一場太近了，來不及投票。請改用 `/場次 直接開`。') });
+  if (deadline.getTime() <= now + 60000) return redo('⚠️ 第一場太近了，來不及投票。請改用 `/場次 直接開`。');
 
   await i.deferUpdate();
+  // 記住這次的團員和規則
+  await q(sb.from('game_members').delete().eq('game_id', game.id));
+  await q(sb.from('game_members').insert(members.map((user_id) => ({ game_id: game.id, user_id, required: draft.required.includes(user_id) }))));
+  await q(sb.from('games').update(draft.rule === 'all' ? { mode: 'all' } : { mode: 'min', min_players: Number(draft.rule) }).eq('id', game.id));
+  await syncRole(i.client, draft.guildId);
+
   const poll = await q(sb.from('polls').insert({
-    guild_id: draft.guildId, channel_id: settings.channel_id, game_ids: draft.games, member_ids: members,
+    guild_id: draft.guildId, channel_id: settings.channel_id, game_ids: [game.id], member_ids: members,
     deadline: deadline.toISOString(), created_by: i.user.id,
   }).select().single());
   await q(sb.from('poll_slots').insert(slots.map((s) => ({ poll_id: poll.id, starts_at: s.toISOString() }))));
@@ -480,7 +531,7 @@ async function modal(i) {
       const d = parseMD(line); const t = parseHM(line.replace(/^\s*[\d/-]+/, ''));
       if (d && t && draft.dates.includes(ymd(d))) draft.times[ymd(d)] = `${pad(t[0])}:${pad(t[1])}`;
     }
-    return i.update(draftView(draft, await getGames(draft.guildId), settings));
+    return i.update(draftView(draft, await getGame(draft.gameId), settings));
   }
   if (id.startsWith('plantime:')) {
     const pollId = id.split(':')[1];
@@ -508,8 +559,9 @@ async function component(i) {
     const draft = drafts.get(i.user.id);
     if (!draft) return i.update({ content: '這個設定已經過期了，請重新 `/開團 發起`。', embeds: [], components: [] });
     const settings = await getSettings(draft.guildId);
-    const games = await getGames(draft.guildId);
-    if (act === 'games') draft.games = i.values;
+    const game = await getGame(draft.gameId);
+    if (act === 'members') { draft.members = i.values; draft.required = draft.required.filter((u) => i.values.includes(u)); }
+    if (act === 'rule') draft.rule = i.values[0];
     if (act === 'dates') draft.dates = i.values;
     if (act === 'dl') draft.dl = i.values[0];
     if (act === 'cancel') { drafts.delete(i.user.id); return i.update({ content: '已取消。', embeds: [], components: [] }); }
@@ -519,8 +571,18 @@ async function component(i) {
         new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('t').setLabel('只改後面的時間，例如 22:00').setStyle(TextInputStyle.Paragraph).setValue(lines)),
       ));
     }
+    if (act === 'req') {
+      const sel = new UserSelectMenuBuilder().setCustomId('draft:reqsel').setPlaceholder('⭐ 勾選必到成員（可以不選）').setMinValues(0).setMaxValues(Math.min(25, draft.members.length));
+      if (draft.required.length) sel.setDefaultUsers(draft.required);
+      return i.reply({ content: '勾選**必到成員**：這些人不能來的日子就不排（例如存檔在他電腦上的房主）。選完回到上面的面板繼續。', components: [new ActionRowBuilder().addComponents(sel)], flags: E });
+    }
+    if (act === 'reqsel') {
+      const bad = i.values.filter((u) => !draft.members.includes(u));
+      draft.required = i.values.filter((u) => draft.members.includes(u));
+      return i.update({ content: `✅ 必到成員：${draft.required.map((u) => `<@${u}>`).join('、') || '無'}${bad.length ? `\n⚠️ ${bad.map((u) => `<@${u}>`).join('、')} 不在團員裡，已略過。` : ''}\n（上面面板的顯示會在你下一次操作時更新）`, components: [] });
+    }
     if (act === 'send') return sendDraft(i, draft, settings);
-    return i.update(draftView(draft, games, settings));
+    return i.update(draftView(draft, game, settings));
   }
 
   // 投票
@@ -696,3 +758,4 @@ async function component(i) {
     }
   }
 }
+export { draftView as _draftView };
