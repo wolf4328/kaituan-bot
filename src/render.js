@@ -12,9 +12,9 @@ const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 export const msgLink = (guildId, channelId, messageId) => `https://discord.com/channels/${guildId}/${channelId}/${messageId}`;
 
 function bar(n, total) {
-  const w = 10;
+  const w = 8;
   const f = total ? Math.round((n / total) * w) : 0;
-  return '█'.repeat(f) + '░'.repeat(w - f);
+  return '🩷'.repeat(f) + '🩶'.repeat(w - f);
 }
 export const steamLink = (img) => { const m = /apps\/(\d+)/.exec(img || ''); return m ? `https://store.steampowered.com/app/${m[1]}/` : null; };
 
@@ -34,7 +34,7 @@ export function pollMessage(d) {
   ];
   const days = slots.slice(0, 25).map((s) => {
     const y = yesOn(d, s.id).filter((u) => poll.member_ids.includes(u)).length;
-    return `## 📅 ${dayLabel(s.starts_at)} ${hm(s.starts_at)}\n### \`${bar(y, total)}\`　${y} / ${total} 人可以${y === total ? '　✨' : ''}`;
+    return `## 📅 ${dayLabel(s.starts_at)} ${hm(s.starts_at)}\n### ${bar(y, total)}　${y} / ${total} 人可以${y === total ? '　✨' : ''}`;
   });
   const names = d.games.map((g) => g.name).join('／');
   const link = steamLink(g0?.image_url);
