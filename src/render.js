@@ -12,10 +12,11 @@ const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 export const msgLink = (guildId, channelId, messageId) => `https://discord.com/channels/${guildId}/${channelId}/${messageId}`;
 
 function bar(n, total) {
-  const w = 7;
+  const w = 10;
   const f = total ? Math.round((n / total) * w) : 0;
-  return '▰'.repeat(f) + '▱'.repeat(w - f);
+  return '█'.repeat(f) + '░'.repeat(w - f);
 }
+export const steamLink = (img) => { const m = /apps\/(\d+)/.exec(img || ''); return m ? `https://store.steampowered.com/app/${m[1]}/` : null; };
 
 // ─── 開團時間表（頻道裡那則會一直更新的訊息）───
 export function pollMessage(d) {
@@ -23,26 +24,27 @@ export function pollMessage(d) {
   const total = poll.member_ids.length;
   const closed = poll.status !== 'open';
   const p = pending(d);
+  const g0 = d.games[0];
   const ruleOf = (g) => (g.mode === 'all' ? '全員到齊才開' : `${g.min_players} 人以上就開`);
+  const head = [
+    `**🎯 成團條件**　${d.games.map(ruleOf).join('／')}`,
+    closed ? '**🔒 狀態**　投票已截止，開團人正在排場次' : `**⏰ 截止**　${ts(poll.deadline, 'f')}（${ts(poll.deadline, 'R')}）`,
+    `**👥 已填寫**　${total - p.length} / ${total} 人`,
+    '-# 大家只看得到人數，看不到你選了什麼',
+  ];
+  const days = slots.slice(0, 25).map((s) => {
+    const y = yesOn(d, s.id).filter((u) => poll.member_ids.includes(u)).length;
+    return `### 📅 ${dayLabel(s.starts_at)}　${hm(s.starts_at)}\n\`${bar(y, total)}\`　**${y}** / ${total} 人可以${y === total ? '　✨ 全員到齊' : ''}`;
+  });
   const embed = new EmbedBuilder()
     .setColor(closed ? 0x64748b : SKY)
-    .setTitle(closed ? '🔒 開團時間表・已截止' : '🗓️ 開團時間表')
-    .setDescription([
-      d.games.map((g) => `🎮 **${g.name}**　${ruleOf(g)}`).join('\n'),
-      closed ? '📋 投票已截止，開團人正在排場次' : `⏰ 截止 ${ts(poll.deadline, 'f')}（${ts(poll.deadline, 'R')}）`,
-      '🔒 大家只看得到人數，看不到你選了什麼',
-    ].join('\n'))
-    .addFields(slots.slice(0, 25).map((s) => {
-      const y = yesOn(d, s.id).filter((u) => poll.member_ids.includes(u)).length;
-      return {
-        name: `${dayLabel(s.starts_at)} ${hm(s.starts_at)}`,
-        value: `\`${bar(y, total)}\` **${y}**/${total}${y === total ? ' ✨' : ''}`,
-        inline: true,
-      };
-    }))
-    .setFooter({ text: closed ? '感謝大家填寫！' : p.length ? `👥 還有 ${p.length} 人沒填完 · 按下面的按鈕填寫` : '✅ 全員都填完了' });
-  const img = d.games.find((g) => g.image_url)?.image_url;
-  if (img) embed.setThumbnail(img);
+    .setAuthor({ name: closed ? '🔒 開團時間表・已截止' : '🗓️ 開團時間表' })
+    .setTitle(d.games.map((g) => g.name).join('／').slice(0, 256))
+    .setDescription([head.join('\n'), '', days.join('\n')].join('\n').slice(0, 4096))
+    .setFooter({ text: closed ? '感謝大家填寫！' : p.length ? `還有 ${p.length} 人沒填完 · 按下面的「填寫我的時間」` : '全員都填完了 ✅' });
+  const link = steamLink(g0?.image_url);
+  if (link) embed.setURL(link);
+  if (g0?.image_url) embed.setImage(g0.image_url);
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`vote:open:${poll.id}`).setLabel('填寫我的時間').setEmoji('✏️').setStyle(ButtonStyle.Primary).setDisabled(closed),
   );
@@ -169,6 +171,8 @@ export function eventMessage(ev, game, settings) {
     )
     .setFooter({ text: full(ev.starts_at) });
   if (game.image_url) embed.setImage(game.image_url);
+  const link = steamLink(game.image_url);
+  if (link && !cancelled) embed.setURL(link);
   const comps = cancelled ? [] : [new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`ev:join:${ev.id}`).setLabel('參加').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`ev:leave:${ev.id}`).setLabel('取消').setStyle(ButtonStyle.Danger),
