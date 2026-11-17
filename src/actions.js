@@ -149,7 +149,7 @@ export async function refreshOverview(client, guildId) {
   }
 }
 
-// 固定團身分組：有在任何一款遊戲團員名單裡的人就給，沒有的就拿掉
+// 固定團身分組：有在任何一款遊戲團員名單裡的人就給（不會自動拿掉）
 export async function syncRole(client, guildId) {
   const settings = await getSettings(guildId);
   if (!settings.member_role_id) return '';
@@ -165,9 +165,7 @@ export async function syncRole(client, guildId) {
     const m = guild.members.cache.get(id);
     if (m && !m.roles.cache.has(role.id)) await m.roles.add(role).catch(() => fail++);
   }
-  for (const m of role.members.values()) {
-    if (!want.has(m.id)) await m.roles.remove(role).catch(() => fail++);
-  }
+  // 安全起見：只會「給」身分組，絕不自動拿掉別人的身分組
   return fail ? `（有 ${fail} 人的身分組改不了，請確認機器人的身分組排在「${role.name}」上面）` : '';
 }
 

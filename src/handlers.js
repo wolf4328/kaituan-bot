@@ -143,7 +143,7 @@ async function settingsCmd(i, sub, settings) {
     if (!r) return i.reply({ content: '✅ 已關閉身分組自動同步。', flags: E });
     await i.deferReply({ flags: E });
     const warn = await syncRole(i.client, i.guildId);
-    return i.editReply(`✅ 之後團員名單變動時，會自動給／拿掉 ${r}。已經先同步一次。${warn}`);
+    return i.editReply(`✅ 之後被加進團員名單的人，會自動拿到 ${r}（不會拿掉任何人的身分組）。${warn}`);
   }
   if (sub === '查看') {
     const s = settings;

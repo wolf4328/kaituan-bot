@@ -32,7 +32,7 @@ export const commands = [
     .addSubcommand((s) => s.setName('提醒').setDescription('設定提醒時間')
       .addIntegerOption((o) => o.setName('開打前分鐘').setDescription('開打前幾分鐘提醒，預設 30').setMinValue(5).setMaxValue(240))
       .addIntegerOption((o) => o.setName('截止前催填小時').setDescription('投票截止前幾小時私訊沒填的人，0 = 不自動催，預設 6').setMinValue(0).setMaxValue(72)))
-    .addSubcommand((s) => s.setName('固定團身分組').setDescription('團員名單變動時自動給／拿掉這個身分組（不填 = 關閉）')
+    .addSubcommand((s) => s.setName('固定團身分組').setDescription('把團員自動加上這個身分組（只加不拿掉；不填 = 關閉）')
       .addRoleOption((o) => o.setName('身分組').setDescription('例如 @固定團')))
     .addSubcommand((s) => s.setName('查看').setDescription('看目前的設定')),
 
