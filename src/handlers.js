@@ -330,7 +330,7 @@ async function sendDraft(i, draft, settings) {
   });
   let threadId = null;
   try {
-    const th = await msg.startThread({ name: `開團時間討論 | ${dayLabel(slots[0])}–${dayLabel(slots[slots.length - 1])}`.slice(0, 100), autoArchiveDuration: 10080 });
+    const th = await msg.startThread({ name: `開團時間討論｜${dayLabel(slots[0])}${slots.length > 1 ? `～${dayLabel(slots[slots.length - 1])}` : ''}`.slice(0, 100), autoArchiveDuration: 10080 });
     threadId = th.id;
   } catch (e) { console.warn('建立討論串失敗', e.message); }
   await q(sb.from('polls').update({ message_id: msg.id, thread_id: threadId }).eq('id', poll.id));

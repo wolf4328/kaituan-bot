@@ -12,9 +12,9 @@ const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 export const msgLink = (guildId, channelId, messageId) => `https://discord.com/channels/${guildId}/${channelId}/${messageId}`;
 
 function bar(n, total) {
-  const w = 8;
+  const w = 7;
   const f = total ? Math.round((n / total) * w) : 0;
-  return '🟦'.repeat(f) + '⬜'.repeat(w - f);
+  return '▰'.repeat(f) + '▱'.repeat(w - f);
 }
 
 // ─── 開團時間表（頻道裡那則會一直更新的訊息）───
@@ -22,23 +22,27 @@ export function pollMessage(d) {
   const { poll, slots } = d;
   const total = poll.member_ids.length;
   const closed = poll.status !== 'open';
-  const lines = slots.map((s) => {
-    const y = yesOn(d, s.id).filter((u) => poll.member_ids.includes(u)).length;
-    const fullTeam = y === total;
-    return `**${dayLabel(s.starts_at)} ${hm(s.starts_at)}**\n${bar(y, total)}　${y}/${total}${fullTeam ? '　✨ 全員到齊' : ''}`;
-  });
   const p = pending(d);
+  const ruleOf = (g) => (g.mode === 'all' ? '全員到齊才開' : `${g.min_players} 人以上就開`);
   const embed = new EmbedBuilder()
     .setColor(closed ? 0x64748b : SKY)
-    .setTitle(closed ? '🔒 開團時間表（已截止）' : '🗓️ 開團時間表')
+    .setTitle(closed ? '🔒 開團時間表・已截止' : '🗓️ 開團時間表')
     .setDescription([
-      `🎮 ${d.games.map(gameLabel).join('、')}`,
-      closed ? '投票已截止，開團人正在排場次。' : `⏳ 截止：${ts(poll.deadline, 'f')}（${ts(poll.deadline, 'R')}）`,
-      '其他成員只看得到人數，看不到你選了什麼。',
-      '',
-      lines.join('\n\n'),
+      d.games.map((g) => `🎮 **${g.name}**　${ruleOf(g)}`).join('\n'),
+      closed ? '📋 投票已截止，開團人正在排場次' : `⏰ 截止 ${ts(poll.deadline, 'f')}（${ts(poll.deadline, 'R')}）`,
+      '🔒 大家只看得到人數，看不到你選了什麼',
     ].join('\n'))
-    .setFooter({ text: p.length ? `還有 ${p.length} 人沒填完` : '✅ 全員都填完了' });
+    .addFields(slots.slice(0, 25).map((s) => {
+      const y = yesOn(d, s.id).filter((u) => poll.member_ids.includes(u)).length;
+      return {
+        name: `${dayLabel(s.starts_at)} ${hm(s.starts_at)}`,
+        value: `\`${bar(y, total)}\` **${y}**/${total}${y === total ? ' ✨' : ''}`,
+        inline: true,
+      };
+    }))
+    .setFooter({ text: closed ? '感謝大家填寫！' : p.length ? `👥 還有 ${p.length} 人沒填完 · 按下面的按鈕填寫` : '✅ 全員都填完了' });
+  const img = d.games.find((g) => g.image_url)?.image_url;
+  if (img) embed.setThumbnail(img);
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`vote:open:${poll.id}`).setLabel('填寫我的時間').setEmoji('✏️').setStyle(ButtonStyle.Primary).setDisabled(closed),
   );
