@@ -37,6 +37,23 @@ async function canManagePoll(i, poll) {
   return isAdminMember(member, member.permissions, await getSettings(poll.guild_id));
 }
 const nameOf = (guild, id) => guild?.members.cache.get(id)?.displayName ?? '（已離開）';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// 遊戲選項：從選單選的是 id；自己打字的話就用名稱或簡稱找
+async function pickGame(i) {
+  const v = (i.options.getString('遊戲') || '').trim();
+  if (UUID.test(v)) { const g = await getGame(v); if (g && g.guild_id === i.guildId) return g; }
+  const games = await getGames(i.guildId);
+  const k = v.toLowerCase();
+  return games.find((g) => g.name.toLowerCase() === k || (g.short || '').toLowerCase() === k)
+    || games.find((g) => g.name.toLowerCase().includes(k) || (g.short || '').toLowerCase().includes(k)) || null;
+}
+const NO_GAME = '找不到這款遊戲。請從選單裡點選，或先用 `/遊戲 新增` 加入。可以用 `/遊戲 列表` 看有哪些遊戲。';
+async function pickEvent(i) {
+  const v = (i.options.getString('場次') || '').trim();
+  if (!UUID.test(v)) return null;
+  const ev = await getEvent(v);
+  return ev && ev.guild_id === i.guildId ? ev : null;
+}
 
 // ─── 入口 ───
 export async function onInteraction(i) {
@@ -158,16 +175,16 @@ async function gameCmd(i, sub) {
     return i.reply({ content: `✅ 已新增\n${gameSummary(g)}\n\n下一步：用 \`/團員 匯入\` 或 \`/團員 管理\` 設定這款遊戲的團員。`, flags: E });
   }
   if (sub === '編輯') {
-    const id = i.options.getString('遊戲');
+    const target = await pickGame(i);
+    if (!target) return i.reply({ content: NO_GAME, flags: E });
     const p = gamePatch(i);
     if (!Object.keys(p).length) return i.reply({ content: '沒有要改的項目。', flags: E });
-    const g = await q(sb.from('games').update(p).eq('id', id).eq('guild_id', i.guildId).select().maybeSingle());
-    if (!g) return i.reply({ content: '找不到這款遊戲。', flags: E });
+    const g = await q(sb.from('games').update(p).eq('id', target.id).select().single());
     return i.reply({ content: `✅ 已更新\n${gameSummary(g)}`, flags: E });
   }
   if (sub === '刪除') {
-    const g = await getGame(i.options.getString('遊戲'));
-    if (!g || g.guild_id !== i.guildId) return i.reply({ content: '找不到這款遊戲。', flags: E });
+    const g = await pickGame(i);
+    if (!g) return i.reply({ content: NO_GAME, flags: E });
     return i.reply({
       content: `確定要刪除 **${g.name}** 嗎？它的團員名單和所有場次都會一起刪掉，不能復原。`, flags: E,
       components: [new ActionRowBuilder().addComponents(
@@ -191,8 +208,8 @@ async function listGames(i) {
 
 // ── /團員 ──
 async function rosterCmd(i, sub) {
-  const g = await getGame(i.options.getString('遊戲'));
-  if (!g || g.guild_id !== i.guildId) return i.reply({ content: '找不到這款遊戲。', flags: E });
+  const g = await pickGame(i);
+  if (!g) return i.reply({ content: NO_GAME, flags: E });
   const cur = await q(sb.from('game_members').select('*').eq('game_id', g.id));
   if (sub === '匯入') {
     const role = i.options.getRole('身分組');
@@ -342,8 +359,8 @@ async function sendDraft(i, draft, settings) {
 async function eventCmd(i, sub, settings) {
   if (sub === '直接開') {
     if (!settings.channel_id) return i.reply({ content: '請先用 `/設定 頻道` 指定開團頻道。', flags: E });
-    const g = await getGame(i.options.getString('遊戲'));
-    if (!g || g.guild_id !== i.guildId) return i.reply({ content: '找不到這款遊戲。', flags: E });
+    const g = await pickGame(i);
+    if (!g) return i.reply({ content: NO_GAME, flags: E });
     const date = parseMD(i.options.getString('日期')); const t = parseHM(i.options.getString('時間'));
     if (!date || !t) return i.reply({ content: '日期或時間格式不對，例如日期 `11/22`、時間 `21:00`。', flags: E });
     const when = withTime(date, t);
@@ -355,8 +372,8 @@ async function eventCmd(i, sub, settings) {
     await refreshOverview(i.client, i.guildId);
     return i.editReply(`✅ 已開 **${g.name}** ${full(when)}`);
   }
-  const ev = await getEvent(i.options.getString('場次'));
-  if (!ev || ev.guild_id !== i.guildId) return i.reply({ content: '找不到這個場次。', flags: E });
+  const ev = await pickEvent(i);
+  if (!ev) return i.reply({ content: '找不到這個場次，請從選單裡點選。', flags: E });
   const g = await getGame(ev.game_id);
   if (sub === '改時間') {
     const t = parseHM(i.options.getString('時間'));
