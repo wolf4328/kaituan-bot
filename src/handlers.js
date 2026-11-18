@@ -289,17 +289,18 @@ async function pollCmd(i, sub, settings) {
     if (!sent.length && !failed.length) return i.editReply('所有人都填完了 👍');
     return i.editReply(`✅ 已私訊提醒 ${sent.length} 人：${sent.map((u) => `<@${u}>`).join('、') || '—'}${failed.length ? `\n⚠️ 這些人關閉了私訊，私訊不到：${failed.map((u) => `<@${u}>`).join('、')}` : ''}`);
   }
-  if (sub === '截止') {
-    const poll = await latestPoll(i.guildId, ['open']);
-    if (!poll) return i.reply({ content: '目前沒有進行中的投票。', flags: E });
-    await i.deferReply({ flags: E });
-    await closePoll(i.client, poll.id);
-    return i.editReply(`✅ 投票已截止，排程清單已私訊給 <@${poll.created_by}>。也可以用 \`/開團 排程\` 在這裡叫出來。`);
-  }
   if (sub === '排程') {
     const poll = await latestPoll(i.guildId, ['open', 'closed']);
     if (!poll) return i.reply({ content: '目前沒有等待排程的投票。', flags: E });
-    if (poll.status === 'open') return i.reply({ content: '投票還沒截止，要提前結束請用 `/開團 截止`。', flags: E });
+    if (poll.status === 'open') {
+      const p = pending(await loadPoll(poll.id));
+      return i.reply({
+        content: `投票還沒截止。要現在截止並叫出排程清單嗎？${p.length ? `\n還有 ${p.length} 人沒填完：${p.map((u) => `<@${u}>`).join('、')}（沒填的日子會當作不能來）` : '\n全員都填完了 👍'}`,
+        components: [new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`vote:closeplan:${poll.id}`).setLabel('確定截止').setStyle(ButtonStyle.Danger),
+        )], flags: E,
+      });
+    }
     return i.reply({ ...planPanel(await loadPoll(poll.id)), flags: E });
   }
   if (sub === '作廢') {
@@ -732,6 +733,14 @@ async function component(i) {
   if (kind === 'vote') {
     const d = await loadPoll(arg);
     if (!d) return i.reply({ content: '找不到這次投票。', flags: E });
+    if (act === 'closeplan') {
+      if (!(await canManagePoll(i, d.poll))) return i.reply({ content: '🔒 只有開團人和管理員可以截止投票。', flags: E });
+      if (d.poll.status === 'open') {
+        await i.update({ content: '⏳ 截止中…', components: [] });
+        await closePoll(i.client, d.poll.id);
+      } else await i.deferUpdate();
+      return i.editReply({ content: '', ...planPanel(await loadPoll(d.poll.id), '✅ 投票已截止。') });
+    }
     if (act === 'close' || act === 'closeok') {
       if (!(await canManagePoll(i, d.poll))) return i.reply({ content: '🔒 只有開團人和管理員可以截止投票。', flags: E });
       if (d.poll.status !== 'open') return act === 'closeok' ? i.update({ content: '這次投票已經截止了。', components: [] }) : i.reply({ content: '這次投票已經截止了。', flags: E });
@@ -746,7 +755,7 @@ async function component(i) {
       }
       await i.update({ content: '⏳ 截止中…', components: [] });
       await closePoll(i.client, d.poll.id);
-      return i.editReply({ content: `✅ 投票已截止，排程清單已私訊給 <@${d.poll.created_by}>。也可以用 \`/開團 排程\` 叫出來。` });
+      return i.editReply({ content: `✅ 投票已截止，排程清單已私訊給 <@${d.poll.created_by}>。萬一私訊不見，用 \`/開團 排程\` 也能叫出來。` });
     }
     if (act === 'who') {
       if (!(await canManagePoll(i, d.poll))) return i.reply({ content: '🔒 只有開團人和管理員看得到誰可以哪天，其他人只看得到人數。', flags: E });
