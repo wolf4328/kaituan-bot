@@ -334,6 +334,7 @@ function draftView(draft, game, settings, note = '') {
   const dlOpts = [
     ...(draft.edit ? [['keep', `維持原本：${full(draft.oldDeadline)}`]] : []),
     ['first-1', '第一場的前一天 23:59（建議）'], ['today', '今天 23:59'], ['tomorrow', '明天 23:59'], ['h3', '第一場開始前 3 小時'],
+    ['custom', draft.dl === 'custom' && draft.customDeadline ? `自訂：${full(draft.customDeadline)}` : '自訂日期和時間…'],
   ].map(([value, label]) => ({ label, value, default: draft.dl === value }));
   const sorted = [...draft.dates].sort();
   const embed = new EmbedBuilder().setColor(SKY).setTitle(`${draft.edit ? '✏️ 修改開團' : '🗓️ 發起開團'}｜${game.name}`).setDescription([
@@ -370,8 +371,12 @@ function draftView(draft, game, settings, note = '') {
 }
 const timeOf = (draft, k, settings) => draft.times[k] || settings.default_times[String(tp(fromYmd(k)).wd)] || '21:00';
 
-function calcDeadline(dl, first) {
+function calcDeadline(dl, first, custom) {
   const now = Date.now();
+  if (dl === 'custom') {
+    const c = custom ? new Date(custom) : null;
+    return c && c.getTime() > now + 60000 && c < first ? c : null;
+  }
   let deadline;
   const t0 = todayStart();
   if (dl === 'today') deadline = mk(tp(t0).y, tp(t0).m, tp(t0).d, 23, 59);
@@ -400,7 +405,7 @@ async function saveEdit(i, draft, settings) {
   }
   let deadline = new Date(d.poll.deadline);
   if (draft.dl !== 'keep') {
-    deadline = calcDeadline(draft.dl, want[0].at);
+    deadline = calcDeadline(draft.dl, want[0].at, draft.customDeadline);
     if (!deadline) return redo('⚠️ 第一場太近了，這個截止選項來不及，請選「維持原本」或其他選項。');
   }
   await i.deferUpdate();
@@ -458,8 +463,8 @@ async function sendDraft(i, draft, settings) {
   const slots = [...draft.dates].sort().map((k) => withTime(fromYmd(k), parseHM(timeOf(draft, k, settings))));
   const now = Date.now();
   if (slots.some((s) => s.getTime() <= now)) return redo('⚠️ 有日期的開打時間已經過了，請取消勾選或調整時間。');
-  const deadline = calcDeadline(draft.dl, slots[0]);
-  if (!deadline) return redo('⚠️ 第一場太近了，來不及投票。請改用 `/場次 直接開`。');
+  const deadline = calcDeadline(draft.dl, slots[0], draft.customDeadline);
+  if (!deadline) return redo(draft.dl === 'custom' ? '⚠️ 自訂的截止時間要在現在之後、第一場開始之前，請重新選。' : '⚠️ 第一場太近了，來不及投票。請改用 `/場次 直接開`。');
 
   const ch = await i.client.channels.fetch(settings.channel_id).catch(() => null);
   if (!ch) return redo('⚠️ 找不到開團頻道，請用 `/設定` 重新選擇。');
@@ -614,6 +619,20 @@ async function modal(i) {
     const ns = Object.keys(patch).length ? await setSettings(i.guildId, patch) : await getSettings(i.guildId);
     return i.update(settingsPanel(ns, Object.keys(patch).length === 2 ? '✅ 提醒時間已更新。' : '⚠️ 有數字超出範圍，那一項沒有改。'));
   }
+  if (id === 'draftdl') {
+    const draft = drafts.get(i.user.id);
+    if (!draft) return i.reply({ content: '這個設定已經過期了，請重新 `/開團 發起`。', flags: E });
+    const settings = await getSettings(draft.guildId);
+    const game = await getGame(draft.gameId);
+    const v = i.fields.getTextInputValue('t');
+    const date = parseMD(v), t = parseHM(v.replace(/^\s*[\d/-]+/, ''));
+    draft.panel = i;
+    if (!date || !t) return i.update(draftView(draft, game, settings, '⚠️ 截止時間格式不對，例如 `11/19 20:00`。'));
+    const when = withTime(date, t);
+    if (when.getTime() <= Date.now() + 60000) return i.update(draftView(draft, game, settings, '⚠️ 截止時間要在現在之後。'));
+    draft.dl = 'custom'; draft.customDeadline = when.toISOString();
+    return i.update(draftView(draft, game, settings, `✅ 截止時間設成 ${full(when)}`));
+  }
   if (id === 'drafttime') {
     const draft = drafts.get(i.user.id);
     if (!draft) return i.reply({ content: '這個設定已經過期了，請重新 `/開團 發起`。', flags: E });
@@ -660,7 +679,17 @@ async function component(i) {
       const win = new Set(Array.from({ length: 25 }, (_, k) => ymd(addDays(todayStart(), k))));
       draft.dates = [...new Set([...i.values, ...draft.dates.filter((k) => !win.has(k))])];
     }
-    if (act === 'dl') draft.dl = i.values[0];
+    if (act === 'dl') {
+      if (i.values[0] === 'custom') {
+        const base = draft.customDeadline ? new Date(draft.customDeadline) : addDays(todayStart(), 1);
+        const p = tp(base);
+        return i.showModal(new ModalBuilder().setCustomId('draftdl').setTitle('自訂截止時間').addComponents(
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('t').setLabel('日期和時間，例如 11/19 20:00').setStyle(TextInputStyle.Short)
+            .setValue(`${p.m}/${p.d} ${draft.customDeadline ? hm(base) : '23:59'}`)),
+        ));
+      }
+      draft.dl = i.values[0];
+    }
     if (act === 'cancel') { drafts.delete(i.user.id); return i.update({ content: '已取消。', embeds: [], components: [] }); }
     if (act === 'time') {
       const lines = [...draft.dates].sort().map((k) => { const p = tp(fromYmd(k)); return `${p.m}/${p.d}（${WD[p.wd]}） ${timeOf(draft, k, settings)}`; }).join('\n');
