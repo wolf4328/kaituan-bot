@@ -329,13 +329,13 @@ function draftView(draft, game, settings, note = '') {
   const dayOpts = [];
   for (let k = 0; k < 25; k++) {
     const d = addDays(start, k), key = ymd(d), w = tp(d).wd;
-    dayOpts.push({ label: `${dayLabel(d)}${k === 0 ? ' 今天' : ''}`, value: key, description: `預設 ${draft.times[key] || settings.default_times[String(w)] || '21:00'}`, default: draft.dates.includes(key) });
+    dayOpts.push({ label: `${dayLabel(d)}${k === 0 ? ' 今天' : ''}`, value: key, emoji: '📅', description: `預設 ${draft.times[key] || settings.default_times[String(w)] || '21:00'}`, default: draft.dates.includes(key) });
   }
   const dlOpts = [
-    ...(draft.edit ? [['keep', `維持原本：${full(draft.oldDeadline)}`]] : []),
-    ['first-1', '第一場的前一天 23:59（建議）'], ['today', '今天 23:59'], ['tomorrow', '明天 23:59'], ['h3', '第一場開始前 3 小時'],
-    ['custom', draft.dl === 'custom' && draft.customDeadline ? `自訂：${full(draft.customDeadline)}` : '自訂日期和時間…'],
-  ].map(([value, label]) => ({ label, value, default: draft.dl === value }));
+    ...(draft.edit ? [['keep', `截止：維持原本 ${full(draft.oldDeadline)}`]] : []),
+    ['first-1', '截止：第一場的前一天 23:59（建議）'], ['today', '截止：今天 23:59'], ['tomorrow', '截止：明天 23:59'], ['h3', '截止：第一場開始前 3 小時'],
+    ['custom', draft.dl === 'custom' && draft.customDeadline ? `截止：自訂 ${full(draft.customDeadline)}` : '截止：自訂日期和時間…'],
+  ].map(([value, label]) => ({ label, value, emoji: '⏰', default: draft.dl === value }));
   const sorted = [...draft.dates].sort();
   const embed = new EmbedBuilder().setColor(SKY).setTitle(`${draft.edit ? '✏️ 修改開團' : '🗓️ 發起開團'}｜${game.name}`).setDescription([
     `👥 **團員 ${draft.members.length} 人**　${draft.members.map((u) => `<@${u}>`).join(' ') || '（用第一個選單勾選）'}`,
@@ -355,7 +355,7 @@ function draftView(draft, game, settings, note = '') {
     components: [
       new ActionRowBuilder().addComponents(memberSel),
       new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('draft:rule').setPlaceholder('🎯 成團條件')
-        .addOptions(RULES.map(([value, label]) => ({ label, value, default: draft.rule === value })))),
+        .addOptions(RULES.map(([value, label]) => ({ label: `成團：${label}`, value, emoji: '🎯', default: draft.rule === value })))),
       new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('draft:dates').setPlaceholder('📅 選擇要問的日期（可複選，可以跨週）')
         .setMinValues(1).setMaxValues(25).addOptions(dayOpts)),
       new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('draft:dl').setPlaceholder('⏰ 投票截止時間').addOptions(dlOpts)),
