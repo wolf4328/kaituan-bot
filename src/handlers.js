@@ -259,6 +259,7 @@ async function pollCmd(i, sub, settings) {
       members: roster.map((r) => r.user_id), required: roster.filter((r) => r.required).map((r) => r.user_id),
       rule: game.mode === 'all' ? 'all' : String(game.min_players), dates: [], times: {}, dl: 'first-1',
     };
+    draft.panel = i;
     drafts.set(i.user.id, draft);
     return i.editReply(draftView(draft, game, settings));
   }
@@ -530,6 +531,7 @@ async function modal(i) {
       const d = parseMD(line); const t = parseHM(line.replace(/^\s*[\d/-]+/, ''));
       if (d && t && draft.dates.includes(ymd(d))) draft.times[ymd(d)] = `${pad(t[0])}:${pad(t[1])}`;
     }
+    draft.panel = i;
     return i.update(draftView(draft, await getGame(draft.gameId), settings));
   }
   if (id.startsWith('plantime:')) {
@@ -578,7 +580,7 @@ async function component(i) {
       return i.reply({ content: '勾選**必到成員**：這些人不能來的日子就不排（例如存檔在他電腦上的房主）。選完回到上面的面板繼續。', components: [new ActionRowBuilder().addComponents(sel)], flags: E });
     }
     if (act === 'role') {
-      return i.reply({ content: '選一個身分組，裡面的人會**加進**團員名單（原本勾的人會保留）。選完回到上面的面板，按任一選單就會看到更新。', flags: E,
+      return i.reply({ content: '選一個身分組，裡面的人會**加進**團員名單（原本勾的人會保留）。', flags: E,
         components: [new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId('draft:rolesel').setPlaceholder('選擇身分組'))] });
     }
     if (act === 'rolesel') {
@@ -588,14 +590,17 @@ async function component(i) {
       const before = draft.members.length;
       draft.members = [...new Set([...draft.members, ...ids])].slice(0, 25);
       const added = draft.members.length - before;
-      return i.update({ content: `✅ 從 <@&${i.values[0]}> 加入 ${added} 人，團員現在共 ${draft.members.length} 人。${ids.length + before > 25 ? '\n⚠️ 團員最多 25 人，超過的沒有加入。' : ''}\n回到上面的面板，按任一選單就會看到更新。`, components: [] });
+      await i.update({ content: `✅ 從 <@&${i.values[0]}> 加入 ${added} 人，團員現在共 ${draft.members.length} 人。上面的面板已經更新。${ids.length + before > 25 ? '\n⚠️ 團員最多 25 人，超過的沒有加入。' : ''}`, components: [] });
+      return draft.panel?.editReply(draftView(draft, game, settings)).catch(() => {});
     }
     if (act === 'reqsel') {
       const bad = i.values.filter((u) => !draft.members.includes(u));
       draft.required = i.values.filter((u) => draft.members.includes(u));
-      return i.update({ content: `✅ 必到成員：${draft.required.map((u) => `<@${u}>`).join('、') || '無'}${bad.length ? `\n⚠️ ${bad.map((u) => `<@${u}>`).join('、')} 不在團員裡，已略過。` : ''}\n（上面面板的顯示會在你下一次操作時更新）`, components: [] });
+      await i.update({ content: `✅ 必到成員：${draft.required.map((u) => `<@${u}>`).join('、') || '無'}${bad.length ? `\n⚠️ ${bad.map((u) => `<@${u}>`).join('、')} 不在團員裡，已略過。` : ''}\n上面的面板已經更新。`, components: [] });
+      return draft.panel?.editReply(draftView(draft, game, settings)).catch(() => {});
     }
     if (act === 'send') return sendDraft(i, draft, settings);
+    draft.panel = i;
     return i.update(draftView(draft, game, settings));
   }
 
