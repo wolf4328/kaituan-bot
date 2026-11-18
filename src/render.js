@@ -49,8 +49,21 @@ export function pollMessage(d) {
   if (g0?.image_url) embed.setImage(g0.image_url);
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`vote:open:${poll.id}`).setLabel('填寫我的時間').setEmoji('✏️').setStyle(ButtonStyle.Primary).setDisabled(closed),
+    new ButtonBuilder().setCustomId(`vote:who:${poll.id}`).setLabel('查看名單（開團人）').setEmoji('📋').setStyle(ButtonStyle.Secondary),
   );
   return { embeds: [embed], components: [row] };
+}
+
+// ─── 誰可以哪天（只給開團人／管理員看）───
+export function whoPanel(d) {
+  const ids = d.poll.member_ids;
+  const lines = d.slots.map((s) => {
+    const v = d.vote[s.id] || {};
+    const y = ids.filter((u) => v[u] === 'y'), n = ids.filter((u) => v[u] === 'n'), u0 = ids.filter((u) => !v[u]);
+    return [`### 📅 ${dayLabel(s.starts_at)} ${hm(s.starts_at)}　${y.length}/${ids.length}`,
+      `✅ ${y.map(at).join(' ') || '—'}`, `❌ ${n.map(at).join(' ') || '—'}`, u0.length ? `⬜ 還沒填：${u0.map(at).join(' ')}` : ''].filter(Boolean).join('\n');
+  });
+  return { embeds: [new EmbedBuilder().setColor(SKY).setTitle('📋 誰可以哪天').setDescription(lines.join('\n').slice(0, 4096)).setFooter({ text: '只有你看得到 · 名單即時更新，再按一次按鈕就會刷新' })] };
 }
 
 // ─── 投票的私人面板（只有自己看得到）───

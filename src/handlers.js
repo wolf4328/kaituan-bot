@@ -9,7 +9,7 @@ import {
   refreshOverview, postInThread, syncRole, fetchMessage, checkPerms,
 } from './actions.js';
 import { loadPoll, status, defaultPickTime, gameLabel, yesOn } from './logic.js';
-import { votePanel, planPanel, eventMessage, pollMessage, msgLink, SKY } from './render.js';
+import { votePanel, planPanel, eventMessage, pollMessage, whoPanel, msgLink, SKY } from './render.js';
 import {
   tp, mk, ymd, fromYmd, dayLabel, hm, full, ts, addDays, todayStart, parseHM, parseMD, withTime, pad, WD,
 } from './time.js';
@@ -702,6 +702,10 @@ async function component(i) {
   if (kind === 'vote') {
     const d = await loadPoll(arg);
     if (!d) return i.reply({ content: '找不到這次投票。', flags: E });
+    if (act === 'who') {
+      if (!(await canManagePoll(i, d.poll))) return i.reply({ content: '🔒 只有開團人和管理員看得到誰可以哪天，其他人只看得到人數。', flags: E });
+      return i.reply({ ...whoPanel(d), flags: E });
+    }
     if (d.poll.status !== 'open') return act === 'open' ? i.reply({ content: '🔒 投票已經截止了。', flags: E }) : i.update({ content: '🔒 投票已經截止了。', embeds: [], components: [] });
     if (!d.poll.member_ids.includes(i.user.id)) return i.reply({ content: '你不在這次的團員名單裡，有需要請找開團人。', flags: E });
     if (act === 'open') return i.reply({ ...votePanel(d, i.user.id), flags: E });
