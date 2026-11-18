@@ -766,7 +766,8 @@ async function component(i) {
       const key = `${d.poll.id}:${i.user.id}`;
       const n = (outsiders.get(key) || 0) + 1;
       outsiders.set(key, n);
-      return i.reply({ content: n === 1 ? '關你什麼事，你只是大便。' : '是按夠沒，老人早點睡。', flags: E });
+      const lines = ['關你什麼事，你只是大便。', '是按夠沒，老人早點睡。', '再按就把按鈕插到你頭上(#`Д´)ﾉ', '你頭上現在有按鈕了(=｀ω´=) (按)(按)(按)', '懶得理你了＝"＝凸'];
+      return i.reply({ content: lines[Math.min(n, lines.length) - 1], flags: E });
     }
     if (act === 'open') return i.reply({ ...votePanel(d, i.user.id), flags: E });
     const yes = act === 'pick' ? new Set(i.values) : new Set();
