@@ -8,7 +8,7 @@ import {
   dm, nudge, closePoll, sendPlan, createEventsFromPlan, postEvent, refreshEventMessage, refreshPollMessage,
   refreshOverview, postInThread, syncRole, fetchMessage, checkPerms,
 } from './actions.js';
-import { loadPoll, status, defaultPickTime, gameLabel, yesOn } from './logic.js';
+import { loadPoll, status, defaultPickTime, gameLabel, yesOn, pending } from './logic.js';
 import { votePanel, planPanel, eventMessage, pollMessage, whoPanel, msgLink, SKY } from './render.js';
 import {
   tp, mk, ymd, fromYmd, dayLabel, hm, full, ts, addDays, todayStart, parseHM, parseMD, withTime, pad, WD,
@@ -18,6 +18,7 @@ import { resolveCover, steamAppId } from './cover.js';
 
 const E = MessageFlags.Ephemeral;
 const drafts = new Map(); // 發起投票的暫存設定，key = userId
+const outsiders = new Map(); // 不在名單裡的人按了幾次「填寫我的時間」
 
 // ─── 權限 ───
 function isAdminMember(member, perms, settings) {
@@ -731,12 +732,33 @@ async function component(i) {
   if (kind === 'vote') {
     const d = await loadPoll(arg);
     if (!d) return i.reply({ content: '找不到這次投票。', flags: E });
+    if (act === 'close' || act === 'closeok') {
+      if (!(await canManagePoll(i, d.poll))) return i.reply({ content: '🔒 只有開團人和管理員可以截止投票。', flags: E });
+      if (d.poll.status !== 'open') return act === 'closeok' ? i.update({ content: '這次投票已經截止了。', components: [] }) : i.reply({ content: '這次投票已經截止了。', flags: E });
+      if (act === 'close') {
+        const p = pending(d);
+        return i.reply({
+          content: `確定要現在截止投票嗎？${p.length ? `\n還有 ${p.length} 人沒填完：${p.map((u) => `<@${u}>`).join('、')}（沒填的日子會當作不能來）` : '\n全員都填完了 👍'}`,
+          components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`vote:closeok:${d.poll.id}`).setLabel('確定截止').setStyle(ButtonStyle.Danger),
+          )], flags: E,
+        });
+      }
+      await i.update({ content: '⏳ 截止中…', components: [] });
+      await closePoll(i.client, d.poll.id);
+      return i.editReply({ content: `✅ 投票已截止，排程清單已私訊給 <@${d.poll.created_by}>。也可以用 \`/開團 排程\` 叫出來。` });
+    }
     if (act === 'who') {
       if (!(await canManagePoll(i, d.poll))) return i.reply({ content: '🔒 只有開團人和管理員看得到誰可以哪天，其他人只看得到人數。', flags: E });
       return i.reply({ ...whoPanel(d), flags: E });
     }
     if (d.poll.status !== 'open') return act === 'open' ? i.reply({ content: '🔒 投票已經截止了。', flags: E }) : i.update({ content: '🔒 投票已經截止了。', embeds: [], components: [] });
-    if (!d.poll.member_ids.includes(i.user.id)) return i.reply({ content: '你不在這次的團員名單裡，有需要請找開團人。', flags: E });
+    if (!d.poll.member_ids.includes(i.user.id)) {
+      const key = `${d.poll.id}:${i.user.id}`;
+      const n = (outsiders.get(key) || 0) + 1;
+      outsiders.set(key, n);
+      return i.reply({ content: n === 1 ? '關你什麼事，你只是大便。' : '是按夠沒，老人早點睡。', flags: E });
+    }
     if (act === 'open') return i.reply({ ...votePanel(d, i.user.id), flags: E });
     const yes = act === 'pick' ? new Set(i.values) : new Set();
     await q(sb.from('votes').upsert(d.slots.map((s) => ({ slot_id: s.id, user_id: i.user.id, value: yes.has(s.id) ? 'y' : 'n' }))));

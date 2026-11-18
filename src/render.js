@@ -49,7 +49,8 @@ export function pollMessage(d) {
   if (g0?.image_url) embed.setImage(g0.image_url);
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`vote:open:${poll.id}`).setLabel('填寫我的時間').setEmoji('✏️').setStyle(ButtonStyle.Primary).setDisabled(closed),
-    new ButtonBuilder().setCustomId(`vote:who:${poll.id}`).setLabel('查看名單（開團人）').setEmoji('📋').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`vote:who:${poll.id}`).setLabel('查看名單').setEmoji('📋').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`vote:close:${poll.id}`).setLabel('截止投票').setEmoji('🔒').setStyle(ButtonStyle.Danger).setDisabled(closed),
   );
   return { embeds: [embed], components: [row] };
 }
