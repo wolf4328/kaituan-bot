@@ -34,6 +34,7 @@ export const commands = [
     .addSubcommand((s) => s.setName('發起').setDescription('選遊戲、勾團員、挑日期，一次發出時間表')
       .addStringOption((o) => o.setName('遊戲').setDescription('從選單選，或直接打新遊戲名稱').setRequired(true).setAutocomplete(true).setMaxLength(60))
       .addStringOption((o) => o.setName('封面').setDescription('選填：貼 Steam 商店網址當封面（不填會自動用名稱找）').setMaxLength(500)))
+    .addSubcommand((s) => s.setName('修改').setDescription('修改進行中的投票：日期、時間、團員、截止時間'))
     .addSubcommand((s) => s.setName('催填').setDescription('立刻私訊還沒填完的人'))
     .addSubcommand((s) => s.setName('截止').setDescription('提前結束投票，私訊排程清單給你'))
     .addSubcommand((s) => s.setName('排程').setDescription('重新叫出排程清單'))

@@ -263,6 +263,23 @@ async function pollCmd(i, sub, settings) {
     drafts.set(i.user.id, draft);
     return i.editReply(draftView(draft, game, settings));
   }
+  if (sub === '修改') {
+    const poll = await latestPoll(i.guildId, ['open']);
+    if (!poll) return i.reply({ content: '目前沒有進行中的投票可以修改。', flags: E });
+    const d = await loadPoll(poll.id);
+    const game = d.games[0];
+    if (!game) return i.reply({ content: '找不到這次投票的遊戲。', flags: E });
+    const draft = {
+      edit: true, pollId: poll.id, guildId: i.guildId, gameId: game.id, oldDeadline: poll.deadline,
+      members: [...poll.member_ids], required: (d.roster[game.id]?.required || []).filter((u) => poll.member_ids.includes(u)),
+      rule: game.mode === 'all' ? 'all' : String(game.min_players),
+      dates: d.slots.map((s) => ymd(s.starts_at)), times: Object.fromEntries(d.slots.map((s) => [ymd(s.starts_at), hm(s.starts_at)])), dl: 'keep',
+    };
+    await i.reply({ ...draftView(draft, game, settings, '-# 已經填的日期，大家的回覆會保留。拿掉的日期，回覆會一起刪除。'), flags: E });
+    draft.panel = i;
+    drafts.set(i.user.id, draft);
+    return;
+  }
   if (sub === '催填') {
     const poll = await latestPoll(i.guildId, ['open']);
     if (!poll) return i.reply({ content: '目前沒有進行中的投票。', flags: E });
@@ -315,10 +332,11 @@ function draftView(draft, game, settings, note = '') {
     dayOpts.push({ label: `${dayLabel(d)}${k === 0 ? ' 今天' : ''}`, value: key, description: `預設 ${draft.times[key] || settings.default_times[String(w)] || '21:00'}`, default: draft.dates.includes(key) });
   }
   const dlOpts = [
+    ...(draft.edit ? [['keep', `維持原本：${full(draft.oldDeadline)}`]] : []),
     ['first-1', '第一場的前一天 23:59（建議）'], ['today', '今天 23:59'], ['tomorrow', '明天 23:59'], ['h3', '第一場開始前 3 小時'],
   ].map(([value, label]) => ({ label, value, default: draft.dl === value }));
   const sorted = [...draft.dates].sort();
-  const embed = new EmbedBuilder().setColor(SKY).setTitle(`🗓️ 發起開團｜${game.name}`).setDescription([
+  const embed = new EmbedBuilder().setColor(SKY).setTitle(`${draft.edit ? '✏️ 修改開團' : '🗓️ 發起開團'}｜${game.name}`).setDescription([
     `👥 **團員 ${draft.members.length} 人**　${draft.members.map((u) => `<@${u}>`).join(' ') || '（用第一個選單勾選）'}`,
     `🎯 **成團條件**　${ruleText(draft.rule)}`,
     `⭐ **必到**　${draft.required.map((u) => `<@${u}>`).join(' ') || '無'}`,
@@ -344,13 +362,92 @@ function draftView(draft, game, settings, note = '') {
         new ButtonBuilder().setCustomId('draft:time').setLabel('調整時間').setEmoji('🕘').setStyle(ButtonStyle.Secondary).setDisabled(!draft.dates.length),
         new ButtonBuilder().setCustomId('draft:role').setLabel('從身分組加人').setEmoji('👥').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('draft:req').setLabel('必到成員').setEmoji('⭐').setStyle(ButtonStyle.Secondary).setDisabled(!draft.members.length),
-        new ButtonBuilder().setCustomId('draft:send').setLabel('送出投票').setStyle(ButtonStyle.Success).setDisabled(!draft.dates.length || !draft.members.length),
+        new ButtonBuilder().setCustomId('draft:send').setLabel(draft.edit ? '儲存修改' : '送出投票').setStyle(ButtonStyle.Success).setDisabled(!draft.dates.length || !draft.members.length),
         new ButtonBuilder().setCustomId('draft:cancel').setLabel('取消').setStyle(ButtonStyle.Secondary),
       ),
     ],
   };
 }
 const timeOf = (draft, k, settings) => draft.times[k] || settings.default_times[String(tp(fromYmd(k)).wd)] || '21:00';
+
+function calcDeadline(dl, first) {
+  const now = Date.now();
+  let deadline;
+  const t0 = todayStart();
+  if (dl === 'today') deadline = mk(tp(t0).y, tp(t0).m, tp(t0).d, 23, 59);
+  else if (dl === 'tomorrow') { const t = addDays(t0, 1); deadline = mk(tp(t).y, tp(t).m, tp(t).d, 23, 59); }
+  else if (dl === 'h3') deadline = new Date(first.getTime() - 3 * 3600 * 1000);
+  else { const t = addDays(first, -1); deadline = mk(tp(t).y, tp(t).m, tp(t).d, 23, 59); }
+  if (deadline >= first) deadline = new Date(first.getTime() - 3600 * 1000);
+  if (deadline.getTime() <= now + 5 * 60000) deadline = new Date(first.getTime() - 30 * 60000);
+  return deadline.getTime() <= now + 60000 ? null : deadline;
+}
+
+// ── /開團 修改：儲存 ──
+async function saveEdit(i, draft, settings) {
+  const game = await getGame(draft.gameId);
+  const d = await loadPoll(draft.pollId);
+  const redo = (note) => i.update(draftView(draft, game, settings, note));
+  if (!d || d.poll.status !== 'open') return i.update({ content: '這次投票已經截止或作廢，不能修改了。', embeds: [], components: [] });
+  const members = [...new Set(draft.members)];
+  if (!members.length) return redo('⚠️ 請至少勾選一位團員。');
+  if (!draft.dates.length) return redo('⚠️ 請至少選一個日期。');
+  const want = [...draft.dates].sort().map((k) => ({ k, at: withTime(fromYmd(k), parseHM(timeOf(draft, k, settings))) }));
+  const now = Date.now();
+  const existing = Object.fromEntries(d.slots.map((s) => [ymd(s.starts_at), s]));
+  if (want.some((w) => w.at.getTime() <= now && !(existing[w.k] && new Date(existing[w.k].starts_at).getTime() === w.at.getTime()))) {
+    return redo('⚠️ 有日期的開打時間已經過了，請取消勾選或調整時間。');
+  }
+  let deadline = new Date(d.poll.deadline);
+  if (draft.dl !== 'keep') {
+    deadline = calcDeadline(draft.dl, want[0].at);
+    if (!deadline) return redo('⚠️ 第一場太近了，這個截止選項來不及，請選「維持原本」或其他選項。');
+  }
+  await i.deferUpdate();
+  // 日期：刪掉沒勾的、改時間、新增
+  const wantKeys = new Set(want.map((w) => w.k));
+  const removed = d.slots.filter((s) => !wantKeys.has(ymd(s.starts_at)));
+  if (removed.length) await q(sb.from('poll_slots').delete().in('id', removed.map((s) => s.id)));
+  const added = [];
+  for (const w of want) {
+    const s = existing[w.k];
+    if (!s) added.push(w);
+    else if (new Date(s.starts_at).getTime() !== w.at.getTime()) await q(sb.from('poll_slots').update({ starts_at: w.at.toISOString() }).eq('id', s.id));
+  }
+  if (added.length) await q(sb.from('poll_slots').insert(added.map((w) => ({ poll_id: d.poll.id, starts_at: w.at.toISOString() }))));
+  // 團員與規則
+  const newMembers = members.filter((u) => !d.poll.member_ids.includes(u));
+  await q(sb.from('game_members').delete().eq('game_id', game.id));
+  await q(sb.from('game_members').insert(members.map((user_id) => ({ game_id: game.id, user_id, required: draft.required.includes(user_id) }))));
+  await q(sb.from('games').update(draft.rule === 'all' ? { mode: 'all' } : { mode: 'min', min_players: Number(draft.rule) }).eq('id', game.id));
+  const deadlineChanged = deadline.getTime() !== new Date(d.poll.deadline).getTime();
+  await q(sb.from('polls').update({ member_ids: members, deadline: deadline.toISOString(), ...(deadlineChanged ? { nudged: false } : {}) }).eq('id', d.poll.id));
+  const d2 = await loadPoll(d.poll.id);
+  await refreshPollMessage(i.client, d2);
+  // 只通知受影響的人
+  const link = msgLink(d.poll.guild_id, d.poll.channel_id, d.poll.message_id);
+  const lines = [];
+  const ping = new Set();
+  if (newMembers.length) { lines.push(`${newMembers.map((u) => `<@${u}>`).join(' ')} 你被加進這次開團了，麻煩填一下時間 🙏`); newMembers.forEach((u) => ping.add(u)); }
+  if (added.length) {
+    const old = members.filter((u) => !newMembers.includes(u));
+    lines.push(`${old.map((u) => `<@${u}>`).join(' ')} 新增了 ${added.map((w) => full(w.at)).join('、')}，麻煩補填一下 🙏`);
+    old.forEach((u) => ping.add(u));
+  }
+  const changes = [];
+  if (removed.length) changes.push(`拿掉 ${removed.map((s) => dayLabel(s.starts_at)).join('、')}`);
+  const retimed = want.filter((w) => existing[w.k] && new Date(existing[w.k].starts_at).getTime() !== w.at.getTime());
+  if (retimed.length) changes.push(`${retimed.map((w) => full(w.at)).join('、')} 改了時間`);
+  if (deadlineChanged) changes.push(`截止改成 ${ts(deadline, 'f')}`);
+  if (changes.length) lines.push(`📝 時間表更新：${changes.join('；')}`);
+  if (lines.length) {
+    const target = d.poll.thread_id ? await i.client.channels.fetch(d.poll.thread_id).catch(() => null) : null;
+    const ch = target || await i.client.channels.fetch(d.poll.channel_id).catch(() => null);
+    await ch?.send({ content: `${lines.join('\n')}\n${link}`, allowedMentions: { users: [...ping] } }).catch(() => {});
+  }
+  drafts.delete(i.user.id);
+  return i.editReply({ content: `✅ 已儲存修改：${link}${lines.length ? '\n已在討論串通知受影響的人。' : ''}`, embeds: [], components: [] });
+}
 
 async function sendDraft(i, draft, settings) {
   const game = await getGame(draft.gameId);
@@ -361,16 +458,8 @@ async function sendDraft(i, draft, settings) {
   const slots = [...draft.dates].sort().map((k) => withTime(fromYmd(k), parseHM(timeOf(draft, k, settings))));
   const now = Date.now();
   if (slots.some((s) => s.getTime() <= now)) return redo('⚠️ 有日期的開打時間已經過了，請取消勾選或調整時間。');
-  const first = slots[0];
-  let deadline;
-  const t0 = todayStart();
-  if (draft.dl === 'today') deadline = mk(tp(t0).y, tp(t0).m, tp(t0).d, 23, 59);
-  else if (draft.dl === 'tomorrow') { const t = addDays(t0, 1); deadline = mk(tp(t).y, tp(t).m, tp(t).d, 23, 59); }
-  else if (draft.dl === 'h3') deadline = new Date(first.getTime() - 3 * 3600 * 1000);
-  else { const t = addDays(first, -1); deadline = mk(tp(t).y, tp(t).m, tp(t).d, 23, 59); }
-  if (deadline >= first) deadline = new Date(first.getTime() - 3600 * 1000);
-  if (deadline.getTime() <= now + 5 * 60000) deadline = new Date(first.getTime() - 30 * 60000);
-  if (deadline.getTime() <= now + 60000) return redo('⚠️ 第一場太近了，來不及投票。請改用 `/場次 直接開`。');
+  const deadline = calcDeadline(draft.dl, slots[0]);
+  if (!deadline) return redo('⚠️ 第一場太近了，來不及投票。請改用 `/場次 直接開`。');
 
   const ch = await i.client.channels.fetch(settings.channel_id).catch(() => null);
   if (!ch) return redo('⚠️ 找不到開團頻道，請用 `/設定` 重新選擇。');
@@ -567,7 +656,10 @@ async function component(i) {
     const game = await getGame(draft.gameId);
     if (act === 'members') { draft.members = i.values; draft.required = draft.required.filter((u) => i.values.includes(u)); }
     if (act === 'rule') draft.rule = i.values[0];
-    if (act === 'dates') draft.dates = i.values;
+    if (act === 'dates') {
+      const win = new Set(Array.from({ length: 25 }, (_, k) => ymd(addDays(todayStart(), k))));
+      draft.dates = [...new Set([...i.values, ...draft.dates.filter((k) => !win.has(k))])];
+    }
     if (act === 'dl') draft.dl = i.values[0];
     if (act === 'cancel') { drafts.delete(i.user.id); return i.update({ content: '已取消。', embeds: [], components: [] }); }
     if (act === 'time') {
@@ -601,7 +693,7 @@ async function component(i) {
       await i.update({ content: `✅ 必到成員：${draft.required.map((u) => `<@${u}>`).join('、') || '無'}${bad.length ? `\n⚠️ ${bad.map((u) => `<@${u}>`).join('、')} 不在團員裡，已略過。` : ''}\n上面的面板已經更新。`, components: [] });
       return draft.panel?.editReply(draftView(draft, game, settings)).catch(() => {});
     }
-    if (act === 'send') return sendDraft(i, draft, settings);
+    if (act === 'send') return draft.edit ? saveEdit(i, draft, settings) : sendDraft(i, draft, settings);
     draft.panel = i;
     return i.update(draftView(draft, game, settings));
   }
