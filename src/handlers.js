@@ -341,6 +341,7 @@ function draftView(draft, game, settings, note = '') {
       new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('draft:dl').setPlaceholder('⏰ 投票截止時間').addOptions(dlOpts)),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('draft:time').setLabel('調整時間').setEmoji('🕘').setStyle(ButtonStyle.Secondary).setDisabled(!draft.dates.length),
+        new ButtonBuilder().setCustomId('draft:role').setLabel('從身分組加人').setEmoji('👥').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('draft:req').setLabel('必到成員').setEmoji('⭐').setStyle(ButtonStyle.Secondary).setDisabled(!draft.members.length),
         new ButtonBuilder().setCustomId('draft:send').setLabel('送出投票').setStyle(ButtonStyle.Success).setDisabled(!draft.dates.length || !draft.members.length),
         new ButtonBuilder().setCustomId('draft:cancel').setLabel('取消').setStyle(ButtonStyle.Secondary),
@@ -575,6 +576,19 @@ async function component(i) {
       const sel = new UserSelectMenuBuilder().setCustomId('draft:reqsel').setPlaceholder('⭐ 勾選必到成員（可以不選）').setMinValues(0).setMaxValues(Math.min(25, draft.members.length));
       if (draft.required.length) sel.setDefaultUsers(draft.required);
       return i.reply({ content: '勾選**必到成員**：這些人不能來的日子就不排（例如存檔在他電腦上的房主）。選完回到上面的面板繼續。', components: [new ActionRowBuilder().addComponents(sel)], flags: E });
+    }
+    if (act === 'role') {
+      return i.reply({ content: '選一個身分組，裡面的人會**加進**團員名單（原本勾的人會保留）。選完回到上面的面板，按任一選單就會看到更新。', flags: E,
+        components: [new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId('draft:rolesel').setPlaceholder('選擇身分組'))] });
+    }
+    if (act === 'rolesel') {
+      const guild = i.client.guilds.cache.get(draft.guildId);
+      await guild.members.fetch().catch(() => {});
+      const ids = [...(guild.roles.cache.get(i.values[0])?.members.values() || [])].filter((m) => !m.user.bot).map((m) => m.id);
+      const before = draft.members.length;
+      draft.members = [...new Set([...draft.members, ...ids])].slice(0, 25);
+      const added = draft.members.length - before;
+      return i.update({ content: `✅ 從 <@&${i.values[0]}> 加入 ${added} 人，團員現在共 ${draft.members.length} 人。${ids.length + before > 25 ? '\n⚠️ 團員最多 25 人，超過的沒有加入。' : ''}\n回到上面的面板，按任一選單就會看到更新。`, components: [] });
     }
     if (act === 'reqsel') {
       const bad = i.values.filter((u) => !draft.members.includes(u));
