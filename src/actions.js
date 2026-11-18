@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } from 'discord.js';
 import { sb, q, getSettings, getGames, getGame } from './db.js';
 import { loadPoll, pending, suggest, status, yesOn } from './logic.js';
 import { pollMessage, planPanel, eventMessage, overviewMessage, msgLink } from './render.js';
@@ -101,7 +101,8 @@ export async function createEventsFromPlan(client, d) {
 
 export async function postEvent(client, ev, game, settings, content, mentionIds) {
   const ch = await client.channels.fetch(ev.channel_id).catch(() => null);
-  if (!ch) throw new Error('找不到開團頻道，請用 /設定 頻道 重新指定');
+  if (!ch) throw new Error('找不到開團頻道，請用 /設定 重新指定');
+  checkPerms(ch);
   const msg = await ch.send({ content, ...eventMessage(ev, game, settings), allowedMentions: { users: mentionIds } });
   let threadId = null;
   try {
@@ -110,6 +111,19 @@ export async function postEvent(client, ev, game, settings, content, mentionIds)
   } catch (e) { console.warn('建立討論串失敗', e.message); }
   await q(sb.from('events').update({ message_id: msg.id, thread_id: threadId }).eq('id', ev.id));
   return msg;
+}
+
+// 檢查機器人在頻道裡有沒有需要的權限，缺的話丟出看得懂的錯誤
+const NEED = [
+  ['ViewChannel', '查看頻道'], ['SendMessages', '發送訊息'], ['EmbedLinks', '嵌入連結'], ['AttachFiles', '附加檔案'],
+  ['ReadMessageHistory', '讀取訊息歷史'], ['CreatePublicThreads', '建立公開討論串'], ['SendMessagesInThreads', '在討論串中發送訊息'],
+];
+export function checkPerms(ch) {
+  const me = ch.guild?.members.me;
+  const perms = me && ch.permissionsFor(me);
+  if (!perms) return;
+  const miss = NEED.filter(([k]) => !perms.has(PermissionFlagsBits[k])).map(([, n]) => n);
+  if (miss.length) throw new Error(`機器人在 <#${ch.id}> 少了這些權限：${miss.join('、')}。\n請到頻道設定 → 權限 → 加入「開團排程機器人」→ 把這幾項打勾（綠色）。`);
 }
 
 export async function refreshEventMessage(client, ev) {

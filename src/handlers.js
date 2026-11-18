@@ -6,7 +6,7 @@ import {
 import { sb, q, getSettings, setSettings, getGames, getGame, latestPoll, getEvent } from './db.js';
 import {
   dm, nudge, closePoll, sendPlan, createEventsFromPlan, postEvent, refreshEventMessage, refreshPollMessage,
-  refreshOverview, postInThread, syncRole, fetchMessage,
+  refreshOverview, postInThread, syncRole, fetchMessage, checkPerms,
 } from './actions.js';
 import { loadPoll, status, defaultPickTime, gameLabel, yesOn } from './logic.js';
 import { votePanel, planPanel, eventMessage, pollMessage, msgLink, SKY } from './render.js';
@@ -372,6 +372,9 @@ async function sendDraft(i, draft, settings) {
   if (deadline.getTime() <= now + 5 * 60000) deadline = new Date(first.getTime() - 30 * 60000);
   if (deadline.getTime() <= now + 60000) return redo('⚠️ 第一場太近了，來不及投票。請改用 `/場次 直接開`。');
 
+  const ch = await i.client.channels.fetch(settings.channel_id).catch(() => null);
+  if (!ch) return redo('⚠️ 找不到開團頻道，請用 `/設定` 重新選擇。');
+  try { checkPerms(ch); } catch (e) { return redo(`⚠️ ${e.message}`); }
   await i.deferUpdate();
   // 記住這次的團員和規則
   await q(sb.from('game_members').delete().eq('game_id', game.id));
@@ -385,7 +388,6 @@ async function sendDraft(i, draft, settings) {
   }).select().single());
   await q(sb.from('poll_slots').insert(slots.map((s) => ({ poll_id: poll.id, starts_at: s.toISOString() }))));
   const d = await loadPoll(poll.id);
-  const ch = await i.client.channels.fetch(settings.channel_id);
   const msg = await ch.send({
     content: `${members.map((u) => `<@${u}>`).join(' ')}\n下面哪幾天可以玩？按「填寫我的時間」勾一勾就好 🙏`,
     ...pollMessage(d), allowedMentions: { users: members },
