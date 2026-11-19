@@ -344,6 +344,74 @@ async function pickPoll(i, statuses) {
   return null;
 }
 
+// ── /場次 直接開 的面板 ──
+const quick = new Map();
+function quickView(qd, game, note = '') {
+  const sel = new UserSelectMenuBuilder().setCustomId('quick:members').setPlaceholder('👥 勾選要 @ 的人').setMinValues(0).setMaxValues(25);
+  if (qd.players.length) sel.setDefaultUsers(qd.players.slice(0, 25));
+  const embed = new EmbedBuilder().setColor(SKY).setTitle(`⚡ 直接開團｜${game.name}`).setDescription([
+    `📅 **時間**　${full(qd.when)}`,
+    `👥 **要 @ 的人 ${qd.players.length} 人**　${qd.players.map((u) => `<@${u}>`).join(' ') || '（不 @ 任何人）'}`,
+    `✅ **自動加入參加**　${qd.autoJoin ? '是，勾選的人直接列入「已參加」，不用自己按' : '否，只 @ 通知，要來的人自己按「參加」'}`,
+    '', '-# 預設帶入這款遊戲的團員。可以用「從身分組加人」一次加一整個身分組。', note,
+  ].filter((x) => x !== '').join('\n'));
+  if (game.image_url) embed.setThumbnail(game.image_url);
+  return {
+    content: '', embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(sel),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('quick:role').setLabel('從身分組加人').setEmoji('👥').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('quick:auto').setLabel(qd.autoJoin ? '改成：只 @ 不自動加入' : '改成：自動加入參加').setEmoji('🔁').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('quick:ok').setLabel('確認開團').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('quick:cancel').setLabel('取消').setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  };
+}
+async function quickComponent(i, act) {
+  const qd = quick.get(i.user.id);
+  if (!qd) return i.update({ content: '這個設定已經過期了，請重新 `/場次 直接開`。', embeds: [], components: [] });
+  const game = await getGame(qd.gameId);
+  const settings = await getSettings(qd.guildId);
+  if (act === 'cancel') { quick.delete(i.user.id); return i.update({ content: '已取消。', embeds: [], components: [] }); }
+  if (act === 'members') qd.players = i.values;
+  if (act === 'auto') qd.autoJoin = !qd.autoJoin;
+  if (act === 'role') {
+    return i.reply({ content: '選一個身分組，裡面的人會**加進**名單（原本勾的人會保留）。', flags: E,
+      components: [new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId('quick:rolesel').setPlaceholder('選擇身分組'))] });
+  }
+  if (act === 'rolesel') {
+    const guild = i.client.guilds.cache.get(qd.guildId);
+    await guild.members.fetch().catch(() => {});
+    const ids = [...(guild.roles.cache.get(i.values[0])?.members.values() || [])].filter((m) => !m.user.bot).map((m) => m.id);
+    const before = qd.players.length;
+    qd.players = [...new Set([...qd.players, ...ids])].slice(0, 25);
+    await i.update({ content: `✅ 從 <@&${i.values[0]}> 加入 ${qd.players.length - before} 人，上面的面板已經更新。${ids.length + before > 25 ? '\n⚠️ 最多 25 人，超過的沒有加入。' : ''}`, components: [] });
+    return qd.panel?.editReply(quickView(qd, game)).catch(() => {});
+  }
+  if (act === 'ok') {
+    if (new Date(qd.when).getTime() < Date.now()) return i.update(quickView(qd, game, '⚠️ 這個時間已經過了，請重新 `/場次 直接開`。'));
+    const ch = await i.client.channels.fetch(settings.channel_id).catch(() => null);
+    if (!ch) return i.update(quickView(qd, game, '⚠️ 找不到開團頻道，請用 `/設定` 重新選擇。'));
+    try { checkPerms(ch); } catch (e) { return i.update(quickView(qd, game, `⚠️ ${e.message}`)); }
+    await i.deferUpdate();
+    const ids = [...new Set(qd.players)];
+    const players = qd.autoJoin ? ids.slice(0, game.cap) : [];
+    const bench = qd.autoJoin ? ids.slice(game.cap) : [];
+    const ev = await q(sb.from('events').insert({ guild_id: qd.guildId, channel_id: settings.channel_id, game_id: game.id, starts_at: qd.when, created_by: i.user.id, players, bench }).select().single());
+    const text = ids.length
+      ? `${ids.map((u) => `<@${u}>`).join(' ')} ${qd.autoJoin ? '開團囉！已經幫大家報名了，不能來的按「取消」。' : '新場次！要來的按「參加」。'}`
+      : '新場次！要來的按「參加」。';
+    await postEvent(i.client, ev, game, settings, text, ids);
+    await refreshOverview(i.client, qd.guildId);
+    quick.delete(i.user.id);
+    return i.editReply({ content: `✅ 已開 **${game.name}** ${full(qd.when)}${ids.length ? `，@ 了 ${ids.length} 人` : ''}。`, embeds: [], components: [] });
+  }
+  qd.panel = i;
+  return i.update(quickView(qd, game));
+}
+
 async function pickOrCreateGame(i) {
   const v = (i.options.getString('遊戲') || '').trim();
   if (UUID.test(v)) { const g = await getGame(v); if (g && g.guild_id === i.guildId) return g; }
@@ -533,19 +601,19 @@ async function sendDraft(i, draft, settings) {
 // ── /場次 ──
 async function eventCmd(i, sub, settings) {
   if (sub === '直接開') {
-    if (!settings.channel_id) return i.reply({ content: '請先用 `/設定 頻道` 指定開團頻道。', flags: E });
+    if (!settings.channel_id) return i.reply({ content: '請先用 `/設定` 指定開團頻道。', flags: E });
     const g = await pickGame(i);
     if (!g) return i.reply({ content: NO_GAME, flags: E });
     const date = parseMD(i.options.getString('日期')); const t = parseHM(i.options.getString('時間'));
     if (!date || !t) return i.reply({ content: '日期或時間格式不對，例如日期 `11/22`、時間 `21:00`。', flags: E });
     const when = withTime(date, t);
     if (when.getTime() < Date.now()) return i.reply({ content: '這個時間已經過了。', flags: E });
-    await i.deferReply({ flags: E });
-    const ev = await q(sb.from('events').insert({ guild_id: i.guildId, channel_id: settings.channel_id, game_id: g.id, starts_at: when.toISOString(), created_by: i.user.id }).select().single());
     const mem = (await q(sb.from('game_members').select('user_id').eq('game_id', g.id))).map((m) => m.user_id);
-    await postEvent(i.client, ev, g, settings, `${mem.map((u) => `<@${u}>`).join(' ')} 新場次！要來的按「參加」。`, mem);
-    await refreshOverview(i.client, i.guildId);
-    return i.editReply(`✅ 已開 **${g.name}** ${full(when)}`);
+    const qd = { guildId: i.guildId, gameId: g.id, when: when.toISOString(), players: mem.slice(0, 25), autoJoin: true };
+    await i.reply({ ...quickView(qd, g), flags: E });
+    qd.panel = i;
+    quick.set(i.user.id, qd);
+    return;
   }
   const ev = await pickEvent(i);
   if (!ev) return i.reply({ content: '找不到這個場次，請從選單裡點選。', flags: E });
@@ -709,6 +777,7 @@ async function component(i) {
   const [kind, act, arg, extra] = i.customId.split(':');
 
   if (kind === 'set') return settingsComponent(i, act);
+  if (kind === 'quick') return quickComponent(i, act);
 
   // 開團 發起 的暫存設定
   if (kind === 'draft') {
@@ -988,4 +1057,4 @@ async function component(i) {
     }
   }
 }
-export { draftView as _draftView, settingsPanel as _settingsPanel };
+export { draftView as _draftView, settingsPanel as _settingsPanel, quickView as _quickView };
