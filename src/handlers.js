@@ -89,6 +89,11 @@ async function autocomplete(i) {
     if (i.commandName === '開團' && typed && !exact) opts.push({ name: `＋ 新遊戲：${typed}`.slice(0, 100), value: typed.slice(0, 100) });
     return i.respond(opts.slice(0, 25));
   }
+  if (f.name === '投票') {
+    const sub = i.options.getSubcommand(false);
+    const st = sub === '修改' || sub === '催填' ? ['open'] : ['open', 'closed'];
+    return i.respond((await pollChoices(i.guildId, st)).filter((o) => !kw || o.name.toLowerCase().includes(kw)).slice(0, 25));
+  }
   if (f.name === '場次') {
     const since = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
     const evs = await q(sb.from('events').select('*').eq('guild_id', i.guildId).eq('status', 'active').gte('starts_at', since).order('starts_at').limit(50));
@@ -265,8 +270,8 @@ async function pollCmd(i, sub, settings) {
     return i.editReply(draftView(draft, game, settings));
   }
   if (sub === '修改') {
-    const poll = await latestPoll(i.guildId, ['open']);
-    if (!poll) return i.reply({ content: '目前沒有進行中的投票可以修改。', flags: E });
+    const poll = await pickPoll(i, ['open']);
+    if (!poll) return;
     const d = await loadPoll(poll.id);
     const game = d.games[0];
     if (!game) return i.reply({ content: '找不到這次投票的遊戲。', flags: E });
@@ -282,16 +287,16 @@ async function pollCmd(i, sub, settings) {
     return;
   }
   if (sub === '催填') {
-    const poll = await latestPoll(i.guildId, ['open']);
-    if (!poll) return i.reply({ content: '目前沒有進行中的投票。', flags: E });
+    const poll = await pickPoll(i, ['open']);
+    if (!poll) return;
     await i.deferReply({ flags: E });
     const { sent, failed } = await nudge(i.client, await loadPoll(poll.id));
     if (!sent.length && !failed.length) return i.editReply('所有人都填完了 👍');
     return i.editReply(`✅ 已私訊提醒 ${sent.length} 人：${sent.map((u) => `<@${u}>`).join('、') || '—'}${failed.length ? `\n⚠️ 這些人關閉了私訊，私訊不到：${failed.map((u) => `<@${u}>`).join('、')}` : ''}`);
   }
   if (sub === '排程') {
-    const poll = await latestPoll(i.guildId, ['open', 'closed']);
-    if (!poll) return i.reply({ content: '目前沒有等待排程的投票。', flags: E });
+    const poll = await pickPoll(i, ['open', 'closed']);
+    if (!poll) return;
     if (poll.status === 'open') {
       const p = pending(await loadPoll(poll.id));
       return i.reply({
@@ -304,12 +309,39 @@ async function pollCmd(i, sub, settings) {
     return i.reply({ ...planPanel(await loadPoll(poll.id)), flags: E });
   }
   if (sub === '作廢') {
-    const poll = await latestPoll(i.guildId, ['open', 'closed']);
-    if (!poll) return i.reply({ content: '目前沒有可以作廢的投票。', flags: E });
+    const poll = await pickPoll(i, ['open', 'closed']);
+    if (!poll) return;
     await q(sb.from('polls').update({ status: 'cancelled' }).eq('id', poll.id));
     await refreshPollMessage(i.client, await loadPoll(poll.id));
-    return i.reply({ content: '✅ 已作廢這次投票。', flags: E });
+    return i.reply({ content: `✅ 已作廢這次投票：${msgLink(poll.guild_id, poll.channel_id, poll.message_id)}\n時間表會變灰色鎖定，要刪掉那則訊息的話可以手動刪。`, flags: E });
   }
+}
+
+async function pollChoices(guildId, statuses) {
+  const polls = await q(sb.from('polls').select('*').eq('guild_id', guildId).in('status', statuses).order('created_at', { ascending: false }).limit(25));
+  if (!polls.length) return [];
+  const games = Object.fromEntries((await getGames(guildId)).map((g) => [g.id, g]));
+  const slots = await q(sb.from('poll_slots').select('poll_id,starts_at').in('poll_id', polls.map((p) => p.id)).order('starts_at'));
+  return polls.map((p) => {
+    const ss = slots.filter((x) => x.poll_id === p.id);
+    const range = ss.length ? `${dayLabel(ss[0].starts_at)}${ss.length > 1 ? `～${dayLabel(ss[ss.length - 1].starts_at)}` : ''}` : '';
+    const name = p.game_ids.map((id) => games[id]?.name || '?').join('／');
+    return { name: `${p.status === 'open' ? '🟢 投票中' : '📋 待排程'}｜${name}｜${range}`.slice(0, 100), value: p.id };
+  });
+}
+// 取得指令要操作的投票：有選就用選的；沒選而且只有一個就用那個；有好幾個就請他選
+async function pickPoll(i, statuses) {
+  const v = i.options.getString('投票');
+  if (v && UUID.test(v)) {
+    const p = await q(sb.from('polls').select('*').eq('id', v).maybeSingle());
+    if (p && p.guild_id === i.guildId && statuses.includes(p.status)) return p;
+    await i.reply({ content: '找不到這個投票，或它已經截止／作廢了。', flags: E }); return null;
+  }
+  const polls = await q(sb.from('polls').select('*').eq('guild_id', i.guildId).in('status', statuses).order('created_at', { ascending: false }));
+  if (polls.length === 1) return polls[0];
+  if (!polls.length) { await i.reply({ content: '目前沒有符合的投票。', flags: E }); return null; }
+  await i.reply({ content: `目前有 ${polls.length} 個投票，請在指令的「投票」欄位選一個。`, flags: E });
+  return null;
 }
 
 async function pickOrCreateGame(i) {

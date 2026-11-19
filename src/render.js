@@ -30,7 +30,7 @@ export function pollMessage(d) {
   const ruleOf = (g) => (g.mode === 'all' ? '全員到齊才開' : `${g.min_players} 人以上就開`);
   const head = [
     `🎯 **成團條件**　${d.games.map(ruleOf).join('／')}`,
-    closed ? '🔒 **投票狀態**　已截止，正在排場次' : `⏰ **截止時間**　${ts(poll.deadline, 'f')}（${ts(poll.deadline, 'R')}）`,
+    poll.status === 'cancelled' ? '❌ **投票狀態**　這次投票已作廢' : closed ? '🔒 **投票狀態**　已截止，正在排場次' : `⏰ **截止時間**　${ts(poll.deadline, 'f')}（${ts(poll.deadline, 'R')}）`,
     `👥 **填寫人數**　${total - p.length} / ${total} 人`,
     '-# 大家只看得到人數，看不到你選了什麼',
   ];
@@ -43,7 +43,7 @@ export function pollMessage(d) {
   const titleLine = link ? `[${names}](${link})` : names;
   const embed = new EmbedBuilder()
     .setColor(closed ? 0x64748b : SKY)
-    .setAuthor({ name: closed ? '🔒 開團時間表・已截止' : '🗓️ 開團時間表' })
+    .setAuthor({ name: poll.status === 'cancelled' ? '❌ 開團時間表・已作廢' : closed ? '🔒 開團時間表・已截止' : '🗓️ 開團時間表' })
     .setDescription([`## ${titleLine}`, head.join('\n'), '', days.join('\n')].join('\n').slice(0, 4096))
     .setFooter({ text: closed ? '感謝大家填寫！' : p.length ? `還有 ${p.length} 人沒填完 · 按下面的「填寫我的時間」` : '全員都填完了 ✅' });
   if (g0?.image_url) embed.setImage(g0.image_url);
