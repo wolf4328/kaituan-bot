@@ -51,6 +51,7 @@ export function pollMessage(d) {
     new ButtonBuilder().setCustomId(`vote:open:${poll.id}`).setLabel('填寫我的時間').setEmoji('✏️').setStyle(ButtonStyle.Primary).setDisabled(closed),
     new ButtonBuilder().setCustomId(`vote:who:${poll.id}`).setLabel('查看名單').setEmoji('📋').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`vote:close:${poll.id}`).setLabel('截止投票').setEmoji('🔒').setStyle(ButtonStyle.Danger).setDisabled(closed),
+    new ButtonBuilder().setCustomId(`vote:cancel:${poll.id}`).setLabel('作廢').setEmoji('🗑️').setStyle(ButtonStyle.Secondary).setDisabled(poll.status === 'cancelled' || poll.status === 'done'),
   );
   return { embeds: [embed], components: [row] };
 }

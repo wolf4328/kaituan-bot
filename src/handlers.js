@@ -765,6 +765,17 @@ async function component(i) {
   if (kind === 'vote') {
     const d = await loadPoll(arg);
     if (!d) return i.reply({ content: '找不到這次投票。', flags: E });
+    if (act === 'cancel' || act === 'cancelok') {
+      if (!(await canManagePoll(i, d.poll))) return i.reply({ content: '🔒 只有開團人和管理員可以作廢投票。', flags: E });
+      if (!['open', 'closed'].includes(d.poll.status)) return act === 'cancelok' ? i.update({ content: '這次投票已經結束了。', components: [] }) : i.reply({ content: '這次投票已經結束了。', flags: E });
+      if (act === 'cancel') {
+        return i.reply({ content: '確定要作廢這次投票嗎？作廢後不會開任何場次，也不能復原。', flags: E,
+          components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`vote:cancelok:${d.poll.id}`).setLabel('確定作廢').setStyle(ButtonStyle.Danger))] });
+      }
+      await q(sb.from('polls').update({ status: 'cancelled' }).eq('id', d.poll.id));
+      await refreshPollMessage(i.client, await loadPoll(d.poll.id));
+      return i.update({ content: '✅ 已作廢這次投票。', components: [] });
+    }
     if (act === 'closeplan') {
       if (!(await canManagePoll(i, d.poll))) return i.reply({ content: '🔒 只有開團人和管理員可以截止投票。', flags: E });
       if (d.poll.status === 'open') {
