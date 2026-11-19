@@ -9,8 +9,10 @@ create table if not exists settings (
   remind_minutes int not null default 30,
   nudge_hours int not null default 6,
   default_times jsonb not null default '{"0":"20:00","1":"21:00","2":"21:00","3":"21:00","4":"21:00","5":"22:00","6":"14:00"}',
-  overview_message_id text
+  overview_message_id text,
+  organizer_role_id text
 );
+alter table settings add column if not exists organizer_role_id text;
 
 create table if not exists games (
   id uuid primary key default gen_random_uuid(),

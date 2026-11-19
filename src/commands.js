@@ -31,7 +31,7 @@ export const commands = [
     .addSubcommand((s) => gameFields(s.setName('編輯').setDescription('改名稱、成團規則、封面'), false))
     .addSubcommand((s) => s.setName('刪除').setDescription('刪除遊戲').addStringOption((o) => gameOpt(o))),
 
-  new SlashCommandBuilder().setName('開團').setDescription('投票與排程（管理員）').setDefaultMemberPermissions(ADMIN)
+  new SlashCommandBuilder().setName('開團').setDescription('發起投票、排程（需要開團權限）')
     .addSubcommand((s) => s.setName('發起').setDescription('選遊戲、勾團員、挑日期，一次發出時間表')
       .addStringOption((o) => o.setName('遊戲').setDescription('從選單選，或直接打新遊戲名稱').setRequired(true).setAutocomplete(true).setMaxLength(60))
       .addStringOption((o) => o.setName('封面').setDescription('選填：貼 Steam 商店網址當封面（不填會自動用名稱找）').setMaxLength(500)))
@@ -40,7 +40,7 @@ export const commands = [
     .addSubcommand((s) => s.setName('排程').setDescription('叫出排程清單（投票還沒截止的話，可以在這裡截止）').addStringOption(pollOpt))
     .addSubcommand((s) => s.setName('作廢').setDescription('作廢一個投票（不會開任何場次）').addStringOption(pollOpt)),
 
-  new SlashCommandBuilder().setName('場次').setDescription('調整場次（管理員）').setDefaultMemberPermissions(ADMIN)
+  new SlashCommandBuilder().setName('場次').setDescription('直接開場次、改時間、取消（需要開團權限）')
     .addSubcommand((s) => s.setName('改時間').setDescription('修改場次時間，會通知參加的人')
       .addStringOption((o) => eventOpt(o))
       .addStringOption((o) => o.setName('時間').setDescription('例如 21:30').setRequired(true))

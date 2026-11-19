@@ -26,6 +26,22 @@ function isAdminMember(member, perms, settings) {
   const roles = member?.roles?.cache ?? (Array.isArray(member?.roles) ? new Map(member.roles.map((r) => [r, true])) : null);
   return !!(settings.admin_role_id && roles?.has(settings.admin_role_id));
 }
+// 能不能開團：管理員一定可以；「開團權限」設成所有人 → 大家都可以；設成某個身分組 → 有那個身分組的人可以
+function isOrganizer(member, perms, settings) {
+  if (isAdminMember(member, perms, settings)) return true;
+  const r = settings.organizer_role_id;
+  if (!r) return false;
+  if (r === 'everyone') return true;
+  const roles = member?.roles?.cache ?? (Array.isArray(member?.roles) ? new Map(member.roles.map((x) => [x, true])) : null);
+  return !!roles?.has(r);
+}
+async function requireOrganizer(i) {
+  const settings = await getSettings(i.guildId);
+  if (isOrganizer(i.member, i.memberPermissions, settings)) return settings;
+  await i.reply({ content: '🔒 你目前沒有開團權限，請找管理員開通。', flags: E });
+  return null;
+}
+const isAdminI = async (i) => isAdminMember(i.member, i.memberPermissions, await getSettings(i.guildId));
 async function requireAdmin(i) {
   const settings = await getSettings(i.guildId);
   if (isAdminMember(i.member, i.memberPermissions, settings)) return settings;
@@ -92,7 +108,7 @@ async function autocomplete(i) {
   if (f.name === '投票') {
     const sub = i.options.getSubcommand(false);
     const st = sub === '修改' || sub === '催填' ? ['open'] : ['open', 'closed'];
-    return i.respond((await pollChoices(i.guildId, st)).filter((o) => !kw || o.name.toLowerCase().includes(kw)).slice(0, 25));
+    return i.respond((await pollChoices(i.guildId, st, (await isAdminI(i)) ? null : i.user.id)).filter((o) => !kw || o.name.toLowerCase().includes(kw)).slice(0, 25));
   }
   if (f.name === '場次') {
     const since = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
@@ -111,12 +127,15 @@ async function command(i) {
   if (name === '我的場次') return myEvents(i);
   if (name === '月曆') return calendarCmd(i);
 
+  if (name === '開團' || name === '場次') {
+    const settings = await requireOrganizer(i);
+    if (!settings) return;
+    return name === '開團' ? pollCmd(i, sub, settings) : eventCmd(i, sub, settings);
+  }
   const settings = await requireAdmin(i);
   if (!settings) return;
   if (name === '設定') return i.reply({ ...settingsPanel(settings), flags: E });
   if (name === '遊戲') return gameCmd(i, sub);
-  if (name === '開團') return pollCmd(i, sub, settings);
-  if (name === '場次') return eventCmd(i, sub, settings);
 }
 
 // ── /設定 ──
@@ -127,6 +146,7 @@ function settingsView(s) {
     { name: '🛡️ 管理員身分組', value: s.admin_role_id ? `<@&${s.admin_role_id}>` : '只有伺服器管理員', inline: true },
     { name: '🔔 提醒', value: `開打前 ${s.remind_minutes} 分鐘\n截止前 ${s.nudge_hours ? `${s.nudge_hours} 小時催填` : '不自動催填'}`, inline: true },
     { name: '🕘 預設開打時間', value: WD_ORDER.map((w) => `週${WD[w]} ${s.default_times[String(w)] || '21:00'}`).join('　') },
+    { name: '🎮 誰可以開團', value: s.organizer_role_id === 'everyone' ? '所有人' : s.organizer_role_id ? `<@&${s.organizer_role_id}> 和管理員` : '只有管理員' },
     { name: '🏷️ 固定團身分組（進階）', value: s.member_role_id ? `<@&${s.member_role_id}>` : '不使用' },
   );
 }
@@ -135,7 +155,8 @@ function settingsPanel(s, note = '') {
     content: note, embeds: [settingsView(s)],
     components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('set:menu').setPlaceholder('選擇要設定的項目…').addOptions(
       { label: '開團頻道', value: 'channel', emoji: '📍', description: '時間表和場次卡要發在哪個頻道' },
-      { label: '管理員身分組', value: 'admin', emoji: '🛡️', description: '讓某個身分組也能開團和改設定' },
+      { label: '誰可以開團', value: 'organizer', emoji: '🎮', description: '讓一般成員也能發起投票、開場次（不能改設定）' },
+      { label: '管理員身分組', value: 'admin', emoji: '🛡️', description: '這個身分組可以改設定、管理所有人的開團' },
       { label: '預設開打時間', value: 'time', emoji: '🕘', description: '週一到週日各自的預設時間' },
       { label: '提醒時間', value: 'remind', emoji: '🔔', description: '開打前幾分鐘提醒、截止前幾小時催填' },
       { label: '遊戲列表', value: 'games', emoji: '🎮', description: '看所有遊戲、團員和規則' },
@@ -153,7 +174,13 @@ async function settingsComponent(i, act) {
     const v = i.values[0];
     if (v === 'channel') return i.update({ content: '選擇開團頻道：', embeds: [], components: [
       new ActionRowBuilder().addComponents(new ChannelSelectMenuBuilder().setCustomId('set:channel').setChannelTypes(ChannelType.GuildText).setPlaceholder('選擇頻道')), backRow()] });
-    if (v === 'admin') return i.update({ content: '選擇管理員身分組（這個身分組的人可以開團、改設定）：', embeds: [], components: [
+    if (v === 'organizer') return i.update({ content: '**誰可以開團**\n開團的人可以發起投票、直接開場次，並管理**自己開的**投票和場次。不能改設定，也不能動別人的團。', embeds: [], components: [
+      new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId('set:organizer').setPlaceholder('選一個身分組（例如 @固定團）')),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('set:orgall').setLabel('所有人都可以開團').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('set:orgoff').setLabel('只有管理員').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('set:back').setLabel('返回設定').setStyle(ButtonStyle.Secondary))] });
+    if (v === 'admin') return i.update({ content: '選擇管理員身分組（這個身分組的人可以改設定、管理所有人的開團）：', embeds: [], components: [
       new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId('set:admin').setPlaceholder('選擇身分組')), backRow()] });
     if (v === 'role') return i.update({ content: '**固定團身分組（進階）**\n被加進任何遊戲團員名單的人，會自動拿到這個身分組。只會加，不會拿掉任何人的身分組。\n機器人的身分組要排在它上面才改得動。', embeds: [], components: [
       new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId('set:role').setPlaceholder('選擇身分組')),
@@ -177,6 +204,15 @@ async function settingsComponent(i, act) {
     const ns = await setSettings(i.guildId, { channel_id: id, overview_message_id: null });
     await i.update(settingsPanel(ns, `✅ 開團頻道改成 <#${id}>。我會在那裡貼一則「📅 場次總覽」，記得把它釘選。`));
     return refreshOverview(i.client, i.guildId);
+  }
+  if (act === 'organizer' || act === 'orgall' || act === 'orgoff') {
+    const val = act === 'organizer' ? i.values[0] : act === 'orgall' ? 'everyone' : null;
+    try {
+      const ns = await setSettings(i.guildId, { organizer_role_id: val });
+      return i.update(settingsPanel(ns, `✅ ${val === 'everyone' ? '所有人都可以開團了。' : val ? `<@&${val}> 的成員可以開團了。` : '現在只有管理員可以開團。'}`));
+    } catch (e) {
+      return i.update({ content: '⚠️ 資料庫還沒有這個欄位。請到 Supabase → SQL Editor 執行這行，再回來設定一次：\n```sql\nalter table settings add column if not exists organizer_role_id text;\n```', embeds: [], components: [backRow()] });
+    }
   }
   if (act === 'admin') return i.update(settingsPanel(await setSettings(i.guildId, { admin_role_id: i.values[0] }), `✅ <@&${i.values[0]}> 現在可以開團和改設定了。`));
   if (act === 'roleoff') return i.update(settingsPanel(await setSettings(i.guildId, { member_role_id: null }), '✅ 已關閉固定團身分組。'));
@@ -317,8 +353,10 @@ async function pollCmd(i, sub, settings) {
   }
 }
 
-async function pollChoices(guildId, statuses) {
-  const polls = await q(sb.from('polls').select('*').eq('guild_id', guildId).in('status', statuses).order('created_at', { ascending: false }).limit(25));
+async function pollChoices(guildId, statuses, onlyUser = null) {
+  let qy = sb.from('polls').select('*').eq('guild_id', guildId).in('status', statuses);
+  if (onlyUser) qy = qy.eq('created_by', onlyUser);
+  const polls = await q(qy.order('created_at', { ascending: false }).limit(25));
   if (!polls.length) return [];
   const games = Object.fromEntries((await getGames(guildId)).map((g) => [g.id, g]));
   const slots = await q(sb.from('poll_slots').select('poll_id,starts_at').in('poll_id', polls.map((p) => p.id)).order('starts_at'));
@@ -334,10 +372,15 @@ async function pickPoll(i, statuses) {
   const v = i.options.getString('投票');
   if (v && UUID.test(v)) {
     const p = await q(sb.from('polls').select('*').eq('id', v).maybeSingle());
-    if (p && p.guild_id === i.guildId && statuses.includes(p.status)) return p;
+    if (p && p.guild_id === i.guildId && statuses.includes(p.status)) {
+      if (p.created_by === i.user.id || await isAdminI(i)) return p;
+      await i.reply({ content: '🔒 這不是你開的投票，只有開團人和管理員能操作。', flags: E }); return null;
+    }
     await i.reply({ content: '找不到這個投票，或它已經截止／作廢了。', flags: E }); return null;
   }
-  const polls = await q(sb.from('polls').select('*').eq('guild_id', i.guildId).in('status', statuses).order('created_at', { ascending: false }));
+  const admin = await isAdminI(i);
+  const polls = (await q(sb.from('polls').select('*').eq('guild_id', i.guildId).in('status', statuses).order('created_at', { ascending: false })))
+    .filter((p) => admin || p.created_by === i.user.id);
   if (polls.length === 1) return polls[0];
   if (!polls.length) { await i.reply({ content: '目前沒有符合的投票。', flags: E }); return null; }
   await i.reply({ content: `目前有 ${polls.length} 個投票，請在指令的「投票」欄位選一個。`, flags: E });
@@ -617,6 +660,7 @@ async function eventCmd(i, sub, settings) {
   }
   const ev = await pickEvent(i);
   if (!ev) return i.reply({ content: '找不到這個場次，請從選單裡點選。', flags: E });
+  if (ev.created_by !== i.user.id && !(await isAdminI(i))) return i.reply({ content: '🔒 這不是你開的場次，只有開團人和管理員能修改。', flags: E });
   const g = await getGame(ev.game_id);
   if (sub === '改時間') {
     const t = parseHM(i.options.getString('時間'));
