@@ -1043,9 +1043,6 @@ async function component(i) {
       const upd = await q(sb.from('events').update({ players, bench }).eq('id', ev.id).select().single());
       await i.update(eventMessage(upd, g, settings));
       if (promoted) await dm(i.client, promoted, { content: `有人取消了，你已經從候補遞補進 **${g.name}** ${full(ev.starts_at)} 🎉` });
-      if (wasPlayer && g.mode === 'all' && ev.created_by !== me) {
-        await dm(i.client, ev.created_by, { content: `⚠️ <@${me}> 取消了 **${g.name}** ${full(ev.starts_at)}，全員制遊戲現在人不齊了（${players.length} 人）。` });
-      }
       return refreshOverview(i.client, ev.guild_id);
     }
   }
