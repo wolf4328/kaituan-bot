@@ -599,34 +599,43 @@ async function calendarPayload(guildId, y, m, selDay = null) {
   const byId = Object.fromEntries(games.map((g) => [g.id, g]));
   const evs = (await q(sb.from('events').select('*').eq('guild_id', guildId).eq('status', 'active')
     .gte('starts_at', startM.toISOString()).lt('starts_at', endM.toISOString()).order('starts_at'))).filter((e) => byId[e.game_id]);
-  const openPolls = await q(sb.from('polls').select('id').eq('guild_id', guildId).eq('status', 'open'));
-  const pollingDays = new Set();
+  const openPolls = await q(sb.from('polls').select('*').eq('guild_id', guildId).eq('status', 'open'));
+  let pollItems = [];
   if (openPolls.length) {
-    const slots = await q(sb.from('poll_slots').select('starts_at').in('poll_id', openPolls.map((p) => p.id)).gte('starts_at', startM.toISOString()).lt('starts_at', endM.toISOString()));
-    slots.forEach((s) => pollingDays.add(tp(s.starts_at).d));
+    const slots = await q(sb.from('poll_slots').select('*').in('poll_id', openPolls.map((p) => p.id)).gte('starts_at', startM.toISOString()).lt('starts_at', endM.toISOString()).order('starts_at'));
+    const votes = slots.length ? await q(sb.from('votes').select('*').in('slot_id', slots.map((s) => s.id))) : [];
+    for (const sl of slots) {
+      const p = openPolls.find((x) => x.id === sl.poll_id);
+      const g = byId[p?.game_ids?.[0]];
+      if (!g) continue;
+      const yes = votes.filter((v) => v.slot_id === sl.id && v.value === 'y' && p.member_ids.includes(v.user_id)).length;
+      pollItems.push({ starts_at: sl.starts_at, game: g, pollId: p.id, poll: p, yes, total: p.member_ids.length });
+    }
   }
-  const png = await renderMonth(y, m, evs.map((e) => ({ starts_at: e.starts_at, game: byId[e.game_id] })), pollingDays, games);
+  const png = await renderMonth(y, m, evs.map((e) => ({ starts_at: e.starts_at, game: byId[e.game_id] })), pollItems, games);
   const file = new AttachmentBuilder(png, { name: `calendar-${monthKey(y, m)}.png` });
   const prev = m === 1 ? monthKey(y - 1, 12) : monthKey(y, m - 1);
   const next = m === 12 ? monthKey(y + 1, 1) : monthKey(y, m + 1);
-  const days = [...new Set(evs.map((e) => tp(e.starts_at).d))];
+  const days = [...new Set([...evs, ...pollItems].map((e) => tp(e.starts_at).d))].sort((a, b) => a - b);
   const comps = [new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`cal:go:${prev}`).setLabel('上個月').setEmoji('◀️').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('cal:go:now').setLabel('本月').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`cal:go:${next}`).setLabel('下個月').setEmoji('▶️').setStyle(ButtonStyle.Secondary),
   )];
   if (days.length) {
-    comps.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`cal:day:${monthKey(y, m)}`).setPlaceholder('📋 查看某天的參加名單…')
+    comps.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`cal:day:${monthKey(y, m)}`).setPlaceholder('📋 查看某天的詳細內容…')
       .addOptions(days.slice(0, 25).map((d) => {
-        const n = evs.filter((e) => tp(e.starts_at).d === d).length;
-        return { label: `${dayLabel(mk(y, m, d))}　${n} 場`, value: String(d), default: d === selDay };
+        const n = evs.filter((e) => tp(e.starts_at).d === d).length, pn = pollItems.filter((e) => tp(e.starts_at).d === d).length;
+        return { label: `${dayLabel(mk(y, m, d))}　${[n ? `成團 ${n}` : '', pn ? `投票中 ${pn}` : ''].filter(Boolean).join('・')}`, value: String(d), default: d === selDay };
       }))));
   }
   const embeds = [];
   if (selDay) {
-    const list = evs.filter((e) => tp(e.starts_at).d === selDay);
-    embeds.push(new EmbedBuilder().setColor(SKY).setTitle(dayLabel(mk(y, m, selDay))).setDescription(list.map((e) =>
-      `**${hm(e.starts_at)}　${byId[e.game_id].name}**　${e.players.length} 人\n${e.players.map((u) => `<@${u}>`).join('、') || '—'}${e.bench.length ? `\n候補：${e.bench.map((u) => `<@${u}>`).join('、')}` : ''}${e.note ? `\n⚠️ ${e.note}` : ''}`).join('\n\n')));
+    const list = evs.filter((e) => tp(e.starts_at).d === selDay).map((e) =>
+      `**✅ ${hm(e.starts_at)}　${byId[e.game_id].name}**　${e.players.length} 人・開團 <@${e.created_by}>\n${e.players.map((u) => `<@${u}>`).join('、') || '—'}${e.bench.length ? `\n候補：${e.bench.map((u) => `<@${u}>`).join('、')}` : ''}${e.note ? `\n⚠️ ${e.note}` : ''}`);
+    const pl = pollItems.filter((e) => tp(e.starts_at).d === selDay).map((e) =>
+      `**🗳️ ${hm(e.starts_at)}　${e.game.name}**（投票中）\n${e.yes}/${e.total} 人可以・開團 <@${e.poll.created_by}>${e.poll.message_id ? `・[看時間表](${msgLink(e.poll.guild_id, e.poll.channel_id, e.poll.message_id)})` : ''}`);
+    embeds.push(new EmbedBuilder().setColor(SKY).setTitle(dayLabel(mk(y, m, selDay))).setDescription([...list, ...pl].join('\n\n').slice(0, 4096) || '—'));
   }
   return { files: [file], attachments: [], embeds, components: comps };
 }
