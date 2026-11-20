@@ -15,6 +15,7 @@ import {
 } from './time.js';
 import { renderMonth, monthKey } from './calendar.js';
 import { resolveCover, steamAppId } from './cover.js';
+import { VERSION, STARTED } from './version.js';
 
 const E = MessageFlags.Ephemeral;
 const drafts = new Map(); // 發起投票的暫存設定，key = userId
@@ -148,7 +149,7 @@ function settingsView(s) {
     { name: '🕘 預設開打時間', value: WD_ORDER.map((w) => `週${WD[w]} ${s.default_times[String(w)] || '21:00'}`).join('　') },
     { name: '🎮 誰可以開團', value: s.organizer_role_id === 'everyone' ? '所有人' : s.organizer_role_id ? `<@&${s.organizer_role_id}> 和管理員` : '只有管理員' },
     { name: '🏷️ 固定團身分組（進階）', value: s.member_role_id ? `<@&${s.member_role_id}>` : '不使用' },
-  );
+  ).setFooter({ text: `版本 ${VERSION}・機器人上次啟動 ${full(STARTED)}` });
 }
 function settingsPanel(s, note = '') {
   return {

@@ -31,7 +31,8 @@ async function registerCommands(guild) {
 }
 
 client.once(Events.ClientReady, async (c) => {
-  console.log(`✅ 已上線：${c.user.tag}`);
+  const { VERSION } = await import('./version.js');
+  console.log(`✅ 已上線：${c.user.tag}（版本 ${VERSION}）`);
   for (const g of c.guilds.cache.values()) await registerCommands(g);
   setInterval(() => tick().catch((e) => console.error('排程檢查失敗', e)), 60 * 1000);
   tick().catch((e) => console.error('排程檢查失敗', e));
