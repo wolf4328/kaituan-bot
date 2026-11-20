@@ -934,6 +934,7 @@ async function component(i) {
     }
     if (act === 'who') {
       if (!(await canManagePoll(i, d.poll))) return i.reply({ content: '🔒 只有開團人和管理員看得到誰可以哪天，其他人只看得到人數。', flags: E });
+      if (d.poll.status === 'open') refreshPollMessage(i.client, d).catch(() => {});
       return i.reply({ ...whoPanel(d), flags: E });
     }
     if (d.poll.status !== 'open') return act === 'open' ? i.reply({ content: '🔒 投票已經截止了。', flags: E }) : i.update({ content: '🔒 投票已經截止了。', embeds: [], components: [] });
@@ -948,8 +949,9 @@ async function component(i) {
     const yes = act === 'pick' ? new Set(i.values) : new Set();
     await q(sb.from('votes').upsert(d.slots.map((s) => ({ slot_id: s.id, user_id: i.user.id, value: yes.has(s.id) ? 'y' : 'n' }))));
     for (const s of d.slots) (d.vote[s.id] ||= {})[i.user.id] = yes.has(s.id) ? 'y' : 'n';
-    await i.update(votePanel(d, i.user.id, true));
-    return refreshPollMessage(i.client, d);
+    // 先更新頻道裡的時間表，就算回覆失敗，人數也不會跟實際投票對不上
+    await refreshPollMessage(i.client, d).catch(() => {});
+    return i.update(votePanel(d, i.user.id, true));
   }
 
   // 排程清單
