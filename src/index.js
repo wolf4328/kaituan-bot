@@ -89,5 +89,22 @@ async function tick() {
   }
 }
 
+// ─── 自動更新（只有用 windows\\start-auto.bat 或 start-hidden.vbs 啟動時才會開）───
+// 每 10 分鐘問一次 GitHub，有新版就結束程式，外面的啟動腳本會下載新版並重開
+if (process.env.AUTO_UPDATE === '1') {
+  const { execFile } = await import('node:child_process');
+  const run = (...a) => new Promise((ok) => execFile('git', a, { cwd: new URL('..', import.meta.url) }, (e, out) => ok(e ? '' : out.trim())));
+  setInterval(async () => {
+    await run('fetch', '-q');
+    const [here, there] = await Promise.all([run('rev-parse', 'HEAD'), run('rev-parse', '@{u}')]);
+    if (here && there && here !== there) {
+      console.log('🔄 發現新版，準備更新並重新啟動…');
+      client.destroy();
+      process.exit(0);
+    }
+  }, 10 * 60 * 1000);
+  console.log('🔄 自動更新已開啟（每 10 分鐘檢查一次）');
+}
+
 process.on('unhandledRejection', (e) => console.error('未處理的錯誤', e));
 client.login(process.env.DISCORD_TOKEN);
