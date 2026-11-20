@@ -820,6 +820,16 @@ const sortedPicks = (d) => [...d.picks].sort((a, b) => new Date(a.starts_at) - n
 async function component(i) {
   const [kind, act, arg, extra] = i.customId.split(':');
 
+  // 要查資料庫的按鈕先回覆 Discord「處理中」，避免超過 3 秒顯示「未及時回應」
+  const slow = (kind === 'vote' && ['pick', 'none', 'closeok', 'cancelok', 'closeplan'].includes(act))
+    || (kind === 'plan' && act !== 'time') || kind === 'ev' || kind === 'ask' || kind === 'cal';
+  if (slow) {
+    await i.deferUpdate();
+    i.update = (p) => i.editReply(p);
+    i.reply = (p) => i.followUp(p);
+    i.deferUpdate = async () => {};
+  }
+
   if (kind === 'set') return settingsComponent(i, act);
   if (kind === 'quick') return quickComponent(i, act);
 
@@ -937,9 +947,9 @@ async function component(i) {
     if (act === 'open') return i.reply({ ...votePanel(d, i.user.id), flags: E });
     const yes = act === 'pick' ? new Set(i.values) : new Set();
     await q(sb.from('votes').upsert(d.slots.map((s) => ({ slot_id: s.id, user_id: i.user.id, value: yes.has(s.id) ? 'y' : 'n' }))));
-    const d2 = await loadPoll(arg);
-    await i.update(votePanel(d2, i.user.id, true));
-    return refreshPollMessage(i.client, d2);
+    for (const s of d.slots) (d.vote[s.id] ||= {})[i.user.id] = yes.has(s.id) ? 'y' : 'n';
+    await i.update(votePanel(d, i.user.id, true));
+    return refreshPollMessage(i.client, d);
   }
 
   // 排程清單

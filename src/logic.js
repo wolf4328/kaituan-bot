@@ -3,14 +3,15 @@ import { hm } from './time.js';
 
 // 一次載入某個投票需要的所有資料
 export async function loadPoll(pollId) {
-  const poll = await getPoll(pollId);
+  // 能同時查的一起查，減少等待時間
+  const [poll, slots, picks] = await Promise.all([getPoll(pollId), getSlots(pollId), getPicks(pollId)]);
   if (!poll) return null;
-  const slots = await getSlots(pollId);
-  const votes = await getVotes(slots.map((s) => s.id));
-  const games = poll.game_ids.length ? await q(sb.from('games').select('*').in('id', poll.game_ids)) : [];
+  const [votes, games, members] = await Promise.all([
+    getVotes(slots.map((s) => s.id)),
+    poll.game_ids.length ? q(sb.from('games').select('*').in('id', poll.game_ids)) : [],
+    getMembers(poll.game_ids),
+  ]);
   games.sort((a, b) => poll.game_ids.indexOf(a.id) - poll.game_ids.indexOf(b.id));
-  const members = await getMembers(poll.game_ids);
-  const picks = await getPicks(pollId);
   // vote[slotId][userId] = 'y' | 'n'
   const vote = {};
   for (const s of slots) vote[s.id] = {};
