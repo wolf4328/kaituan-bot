@@ -823,6 +823,11 @@ async function component(i) {
   // 要查資料庫的按鈕先回覆 Discord「處理中」，避免超過 3 秒顯示「未及時回應」
   const slow = (kind === 'vote' && ['pick', 'none', 'closeok', 'cancelok', 'closeplan'].includes(act))
     || (kind === 'plan' && act !== 'time') || kind === 'ev' || kind === 'ask' || kind === 'cal';
+  // 會跳出新訊息的按鈕（填寫、查看名單、截止、作廢）也先佔位，避免查資料庫太久
+  if (kind === 'vote' && ['open', 'who', 'close', 'cancel'].includes(act)) {
+    await i.deferReply({ flags: E });
+    i.reply = (p) => i.editReply(p);
+  }
   if (slow) {
     await i.deferUpdate();
     i.update = (p) => i.editReply(p);
